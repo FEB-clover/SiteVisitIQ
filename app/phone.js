@@ -506,11 +506,11 @@ function Queue({ items, onOpen, patchItem, onSiteVisit, svIds }) {
 }
 
 function ItemCard({ it, onOpen, patchItem, onSiteVisit, inSv }) {
+  // four toggles, evenly spaced across a phone card
   const actions = [
-    ...(onSiteVisit ? [['Site Visit', !!inSv, () => onSiteVisit(it)]] : []),
-    ['Discussed', it.discussed, () => patchItem(it.id, { discussed: !it.discussed })],
-    ['Complete', it.status === 'Complete', () => patchItem(it.id, { status: it.status === 'Complete' ? 'Open' : 'Complete' })],
     ['Agenda', it.on_agenda, () => patchItem(it.id, { on_agenda: !it.on_agenda }, it.on_agenda ? '' : 'Added to agenda')],
+    ...(onSiteVisit ? [['Site Visit', !!inSv, () => onSiteVisit(it)]] : []),
+    ['Complete', it.status === 'Complete', () => patchItem(it.id, { status: it.status === 'Complete' ? 'Open' : 'Complete' })],
     ['Archive', it.archived, () => patchItem(it.id, { archived: !it.archived }, 'Archived')],
   ];
   return (
@@ -528,10 +528,11 @@ function ItemCard({ it, onOpen, patchItem, onSiteVisit, inSv }) {
           {it.last_walked_by && <div style={{ color: 'var(--accent)', fontSize: 12.5, fontWeight: 600, marginTop: 2 }}>Walked by {it.last_walked_by}{it.last_walked_date ? ' · ' + String(it.last_walked_date).slice(0, 10) : ''}</div>}
         </div>
       </div>
-      <div style={ST.actionrow}>
+      <div style={{ ...ST.checkrow, gridTemplateColumns: `repeat(${actions.length}, 1fr)` }}>
         {actions.map(([lbl, on, fn]) => (
-          <button key={lbl} onClick={fn} style={ST.actbtn}>
-            <span style={{ ...ST.checkbox, ...(on ? { background: 'var(--coral)', borderColor: 'var(--coral)' } : {}) }}>{on ? '✓' : ''}</span>{lbl}
+          <button key={lbl} onClick={fn} style={{ ...ST.checkbtn, color: on ? 'var(--accent)' : '#5b6775' }}>
+            <span style={{ ...ST.checkbox, ...(on ? { background: 'var(--accent)', borderColor: 'var(--accent)' } : {}) }}>{on ? '✓' : ''}</span>
+            <span style={ST.checklbl}>{lbl}</span>
           </button>
         ))}
       </div>
@@ -1041,8 +1042,13 @@ const ST = {
   ls: { fontSize: 12, fontWeight: 700, color: 'var(--danger-d)', background: 'var(--danger-bg)', padding: '1px 6px', borderRadius: 10 },
   todo: { fontSize: 12, fontWeight: 700, color: '#fff', background: 'var(--coral)', padding: '1px 6px', borderRadius: 10 },
   actionrow: { display: 'flex', gap: 4, marginTop: 9, paddingTop: 8, borderTop: '1px solid #f0f3f6' },
+  // five toggles across a phone: equal columns, checkbox above a one-line label
+  checkrow: { display: 'grid', gap: 2, marginTop: 10, paddingTop: 9, borderTop: '1px solid #f0f3f6' },
+  checkbtn: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start',
+    gap: 5, padding: '2px 0 1px', minHeight: 44, background: 'none', width: '100%' },
+  checklbl: { fontSize: 11, fontWeight: 600, lineHeight: 1.15, whiteSpace: 'nowrap', letterSpacing: '-0.01em' },
   actbtn: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, fontSize: 13, fontWeight: 600, color: '#4a5665', padding: '3px 2px' },
-  checkbox: { width: 16, height: 16, borderRadius: 5, border: '1.5px solid #c3ccd6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12.5, flex: 'none' },
+  checkbox: { width: 19, height: 19, borderRadius: 5, border: '1.5px solid #c3ccd6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12.5, flex: 'none' },
   checkbox2: { width: 20, height: 20, borderRadius: 6, border: '2px solid #c3ccd6', flex: 'none' },
   critrow: { width: '100%', display: 'flex', gap: 10, alignItems: 'center', background: '#fff', border: '1px solid var(--line)', borderRadius: 11, padding: 9, marginBottom: 8, textAlign: 'left' },
   critnum: { width: 22, height: 22, borderRadius: '50%', background: 'var(--danger)', color: '#fff', fontSize: 13.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' },

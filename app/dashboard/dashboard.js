@@ -567,11 +567,11 @@ function Queue({ items, onOpen, patch, onNew, onPhoto, onSiteVisit, svIds }) {
 }
 
 function IssueCard({ it, onOpen, patch, onPhoto, onSiteVisit, inSv }) {
+  // same set and order as the field app so the two read identically
   const acts = [
-    ...(onSiteVisit ? [['Site Visit', !!inSv, () => onSiteVisit(it)]] : []),
-    ['Discussed', it.discussed, () => patch(it.id, { discussed: !it.discussed })],
-    ['Complete', it.status === 'Complete', () => patch(it.id, { status: it.status === 'Complete' ? 'Open' : 'Complete' })],
     ['Agenda', it.on_agenda, () => patch(it.id, { on_agenda: !it.on_agenda }, it.on_agenda ? '' : 'Added to agenda')],
+    ...(onSiteVisit ? [['Site Visit', !!inSv, () => onSiteVisit(it)]] : []),
+    ['Complete', it.status === 'Complete', () => patch(it.id, { status: it.status === 'Complete' ? 'Open' : 'Complete' })],
     ['Archive', it.archived, () => patch(it.id, { archived: !it.archived }, 'Archived')],
   ];
   return (
