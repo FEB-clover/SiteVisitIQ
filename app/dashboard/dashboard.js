@@ -533,18 +533,56 @@ function PropNav({ prop, tab, setTab, items, onBack }) {
 }
 
 /* ---------------- Queue (card grid) ---------------- */
+// who logged it and when — falls back to the stamp a saved site report leaves
+const walkerOf = (i) => i.walker_name || i.last_walked_by || '';
+const dateOf = (i) => String(i.walk_date || i.last_walked_date || i.created_at || '').slice(0, 10);
+
+const SORTS = [
+  ['sev', 'Severity'],
+  ['new', 'Walk date — newest'],
+  ['old', 'Walk date — oldest'],
+  ['who', 'Walker A–Z'],
+  ['cat', 'Category'],
+];
+
 function Queue({ items, onOpen, patch, onNew, onPhoto, onSiteVisit, svIds }) {
   const [q, setQ] = useState('');
   const [f, setF] = useState({ open: true });
+  const [sort, setSort] = useState('sev');
+  const [who, setWho] = useState('');
+  const [when, setWhen] = useState('');
   const chips = [['ls', 'Life safety'], ['High', 'High'], ['Low', 'Low'], ['Monitor', 'Monitor'], ['Status', 'Job Status'], ['todo', 'On to-do']];
   const toggle = (k) => setF((s) => ({ ...s, [k]: !s[k] }));
+
+  const live = items.filter((i) => !i.archived);
+  // options come from the data actually present, so the lists are never stale
+  const walkers = useMemo(
+    () => [...new Set(live.map(walkerOf).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [items]);
+  const dates = useMemo(
+    () => [...new Set(live.map(dateOf).filter(Boolean))].sort().reverse(),
+    [items]);
+
   let list = items.filter((i) => !i.archived && matchQ(i, q));
   if (f.open) list = list.filter((i) => i.status !== 'Complete');
   if (f.ls) list = list.filter((i) => i.life_safety);
   if (f.todo) list = list.filter((i) => i.send_todo);
   const rs = RATINGS.filter((r) => f[r]);
   if (rs.length) list = list.filter((i) => rs.includes(i.priority));
-  list = [...list].sort((a, b) => (SEV[a.priority] ?? 3) - (SEV[b.priority] ?? 3) || new Date(b.walk_date || b.created_at) - new Date(a.walk_date || a.created_at));
+  if (who) list = list.filter((i) => walkerOf(i) === who);
+  if (when) list = list.filter((i) => dateOf(i) === when);
+
+  const bySev = (a, b) => (SEV[a.priority] ?? 3) - (SEV[b.priority] ?? 3);
+  const byDate = (a, b) => new Date(dateOf(b) || 0) - new Date(dateOf(a) || 0);
+  const SORTFN = {
+    sev: (a, b) => bySev(a, b) || byDate(a, b),
+    new: (a, b) => byDate(a, b) || bySev(a, b),
+    old: (a, b) => -byDate(a, b) || bySev(a, b),
+    who: (a, b) => walkerOf(a).localeCompare(walkerOf(b)) || byDate(a, b),
+    cat: (a, b) => (a.category || 'zzz').localeCompare(b.category || 'zzz') || bySev(a, b),
+  };
+  list = [...list].sort(SORTFN[sort] || SORTFN.sev);
+  const sortLabel = (SORTS.find((x) => x[0] === sort) || SORTS[0])[1].toLowerCase();
   return (
     <div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
@@ -553,10 +591,37 @@ function Queue({ items, onOpen, patch, onNew, onPhoto, onSiteVisit, svIds }) {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search items…" style={{ border: 'none', outline: 'none', flex: 1, fontSize: 15, background: 'transparent' }} />
         </div>
         {chips.map(([k, lbl]) => <button key={k} onClick={() => toggle(k)} style={{ ...D.chip, ...(f[k] ? D.chipOn : {}) }}>{lbl}</button>)}
-        <button style={{ ...D.filt, marginLeft: 'auto' }} onClick={() => setF({})}>Clear</button>
+        <button style={{ ...D.filt, marginLeft: 'auto' }} onClick={() => { setF({}); setWho(''); setWhen(''); setSort('sev'); setQ(''); }}>Clear</button>
         <button style={D.newbtn2} onClick={onNew}>+ New issue</button>
       </div>
-      <div style={{ color: '#6b7684', fontSize: 13.5, margin: '0 2px 10px' }}>{list.length} of {items.filter((i) => !i.archived).length} · by severity</div>
+
+      <div style={D.sortBar}>
+        <label style={D.sortWrap}>
+          <span style={D.sortCap}>Walker</span>
+          <select value={who} onChange={(e) => setWho(e.target.value)} style={{ ...D.sel, ...(who ? D.selOn : {}) }}>
+            <option value="">All walkers</option>
+            {walkers.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </label>
+        <label style={D.sortWrap}>
+          <span style={D.sortCap}>Walk date</span>
+          <select value={when} onChange={(e) => setWhen(e.target.value)} style={{ ...D.sel, ...(when ? D.selOn : {}) }}>
+            <option value="">All dates</option>
+            {dates.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label style={{ ...D.sortWrap, marginLeft: 'auto' }}>
+          <span style={D.sortCap}>Sort by</span>
+          <select value={sort} onChange={(e) => setSort(e.target.value)} style={{ ...D.sel, ...(sort !== 'sev' ? D.selOn : {}) }}>
+            {SORTS.map(([k, lbl]) => <option key={k} value={k}>{lbl}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div style={{ color: '#6b7684', fontSize: 13.5, margin: '0 2px 10px' }}>
+        {list.length} of {live.length} · {sortLabel}
+        {who ? ' · ' + who : ''}{when ? ' · ' + when : ''}
+      </div>
       {list.length === 0 ? <Empty /> : (
         <div style={D.issueGrid}>
           {list.map((it) => <IssueCard key={it.id} it={it} onOpen={onOpen} patch={patch} onPhoto={onPhoto} onSiteVisit={onSiteVisit} inSv={(svIds || []).includes(it.id)} />)}
@@ -1439,6 +1504,13 @@ const D = {
   chip: { padding: '7px 13px', borderRadius: 18, background: '#fff', border: '1px solid #e2e8f0', color: '#6b7684', fontSize: 13.5, fontWeight: 600 },
   chipOn: { background: '#0d1620', color: '#fff', borderColor: '#0d1620' },
   filt: { border: '1px solid #d5dde5', borderRadius: 8, padding: '8px 12px', background: '#fff', color: '#6b7684', fontSize: 14, fontWeight: 600 },
+  // queue sort / walker / walk-date controls
+  sortBar: { display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', margin: '0 2px 12px' },
+  sortWrap: { display: 'flex', flexDirection: 'column', gap: 4 },
+  sortCap: { fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#95a1b0' },
+  sel: { border: '1px solid #d5dde5', borderRadius: 8, padding: '8px 11px', background: '#fff', color: '#4a5665',
+    fontSize: 14.5, fontWeight: 600, minWidth: 168, cursor: 'pointer' },
+  selOn: { borderColor: '#0e5c63', color: '#0e5c63', background: '#e7f0f1' },
   filtOn: { background: '#0d1620', color: '#fff', borderColor: '#0d1620' },
   issueGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(380px,1fr))', gap: 14 },
   card: { background: '#fff', border: '1px solid #e6ebf0', borderRadius: 14, padding: 14 },
