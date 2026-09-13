@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
+import { fetchPhoto, fetchPlan } from '../../../../../lib/img';
 import { sql, ensureSchema } from '../../../../../lib/db';
 import { currentUser } from '../../../../../lib/auth';
 import { buildReport } from '../../../../../lib/report';
@@ -8,14 +9,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-async function fetchBytes(url) {
-  if (!url) return null;
-  try {
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return null;
-    return Buffer.from(await r.arrayBuffer());
-  } catch { return null; }
-}
 
 // POST /api/site-reports/<id>/save — render the PDF, store it, stamp last-walked on issues
 export async function POST(req, { params }) {
@@ -42,12 +35,12 @@ export async function POST(req, { params }) {
     const photoSets = {};
     for (const it of items) {
       const urls = ph.filter((p) => p.item_id === it.id).map((p) => p.url);
-      const bytes = (await Promise.all(urls.map(fetchBytes))).filter(Boolean);
+      const bytes = (await Promise.all(urls.map((u) => fetchPhoto(u)))).filter(Boolean);
       photoSets[it.id] = bytes;
     }
 
     const anyPinned = items.some((i) => i.map_x != null && i.map_y != null);
-    const mapBytes = anyPinned ? await fetchBytes(report.site_map_url) : null;
+    const mapBytes = anyPinned ? await fetchPlan(report.site_map_url) : null;
 
     const property = { id: report.property_id, name: report.property_name, address: report.property_address };
     const pdf = await buildReport({

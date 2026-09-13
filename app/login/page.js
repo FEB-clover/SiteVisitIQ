@@ -32,7 +32,7 @@ export default function Login() {
         <div className="ring on-dark" style={{ width: 46, height: 46 }} />
         <div>
           <div style={S.name}>SiteVisit <span style={{ color: 'var(--accent-lt)' }}>IQ</span></div>
-          <div style={S.sub}>Acquisition Intelligence</div>
+          <div style={S.sub}>Operations Intelligence</div>
         </div>
       </div>
       <div style={S.card}>

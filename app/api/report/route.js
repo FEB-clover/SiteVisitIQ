@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../lib/db';
 import { currentUser } from '../../../lib/auth';
 import { buildReport } from '../../../lib/report';
+import { fetchPhoto, fetchPlan } from '../../../lib/img';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,14 +10,6 @@ export const maxDuration = 30;
 
 const TYPES = ['agenda', 'critical', 'sitemap', 'floorplans', 'prewalk', 'item', 'sitevisit'];
 
-async function fetchBytes(url) {
-  if (!url) return null;
-  try {
-    const r = await fetch(url, { cache: 'no-store' });
-    if (!r.ok) return null;
-    return Buffer.from(await r.arrayBuffer());
-  } catch { return null; }
-}
 
 export async function GET(req) {
   const me = currentUser();
@@ -49,11 +42,11 @@ export async function GET(req) {
         const { rows: ph } = await sql`SELECT item_id, url FROM item_photos WHERE item_id = ANY(${rids}) ORDER BY id`;
         for (const it of ritems) {
           const urls = ph.filter((x) => x.item_id === it.id).map((x) => x.url);
-          photoSets[it.id] = (await Promise.all(urls.map(fetchBytes))).filter(Boolean);
+          photoSets[it.id] = (await Promise.all(urls.map((u) => fetchPhoto(u)))).filter(Boolean);
         }
       }
       const anyPin = ritems.some((i) => i.map_x != null && i.map_y != null);
-      const mapBytes = anyPin ? await fetchBytes(rep.site_map_url) : null;
+      const mapBytes = anyPin ? await fetchPlan(rep.site_map_url) : null;
       const pdf = await buildReport({
         type: 'sitevisit',
         property: { id: rep.property_id, name: rep.property_name, address: rep.property_address },
@@ -72,8 +65,8 @@ export async function GET(req) {
       const { rows: pr } = await sql`SELECT id, name, address, site_map_url FROM properties WHERE id = ${item.property_id} LIMIT 1`;
       const property = pr[0] || { id: item.property_id, name: item.property_id };
       const { rows: ph } = await sql`SELECT url FROM item_photos WHERE item_id = ${itemId} ORDER BY id`;
-      const photoBytes = ph.length ? [await fetchBytes(ph[0].url)].filter(Boolean) : [];
-      const mapBytes = item.map_x != null ? await fetchBytes(property.site_map_url) : null;
+      const photoBytes = ph.length ? [await fetchPhoto(ph[0].url)].filter(Boolean) : [];
+      const mapBytes = item.map_x != null ? await fetchPlan(property.site_map_url) : null;
       const pdf = await buildReport({ type, property, item, mapBytes, photoBytes, date: new Date() });
       return pdfResponse(pdf, property.name, 'issue-' + itemId);
     }
@@ -92,8 +85,8 @@ export async function GET(req) {
     }
 
     const needMap = type === 'agenda' || type === 'critical' || type === 'sitemap';
-    const mapBytes = needMap ? await fetchBytes(property.site_map_url) : null;
-    const floorBytes = type === 'floorplans' ? (await Promise.all(floors.map(fetchBytes))).filter(Boolean) : [];
+    const mapBytes = needMap ? await fetchPlan(property.site_map_url) : null;
+    const floorBytes = type === 'floorplans' ? (await Promise.all(floors.map((u) => fetchPlan(u)))).filter(Boolean) : [];
 
     const pdf = await buildReport({ type, property, floors, items, mapBytes, floorBytes, date: new Date() });
     return pdfResponse(pdf, property.name, type);

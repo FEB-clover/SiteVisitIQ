@@ -775,13 +775,35 @@ function SiteVisit({ prop, items, reports, activeId, memberIds, busy, onNew, onS
       <div style={ST.sechead}>Saved reports · {saved.length}</div>
       {!saved.length ? <div style={{ color: 'var(--muted)', fontSize: 14.5, padding: 12 }}>No saved reports yet.</div>
         : saved.map((r) => (
-          <button key={r.id} style={{ ...ST.card, width: '100%', textAlign: 'left' }} onClick={() => r.pdf_url && onOpenSaved(r.pdf_url)}>
-            <div style={{ fontWeight: 600, fontSize: 15.5 }}>{r.name}</div>
-            <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
-              {r.walker_name} · {String(r.walk_date).slice(0, 10)} · {r.item_count} issue{r.item_count === 1 ? '' : 's'}
+          <div key={r.id} style={{ ...ST.card, width: '100%', textAlign: 'left' }}>
+            <div onClick={() => r.pdf_url && onOpenSaved(r.pdf_url)}>
+              <div style={{ fontWeight: 600, fontSize: 15.5 }}>{r.name}</div>
+              <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
+                {r.walker_name} · {String(r.walk_date).slice(0, 10)} · {r.item_count} issue{r.item_count === 1 ? '' : 's'}
+              </div>
             </div>
-          </button>
+            {r.pdf_url && <ShareRow url={r.pdf_url} name={r.name} />}
+          </div>
         ))}
+    </div>
+  );
+}
+
+/* Send a link instead of a big attachment. On a phone the native share sheet
+   is the natural route (Mail, Messages, Teams...); clipboard is the fallback. */
+function ShareRow({ url, name }) {
+  const [done, setDone] = useState(false);
+  async function go() {
+    if (navigator.share) {
+      try { await navigator.share({ title: name, text: name, url }); return; } catch {}
+    }
+    try { await navigator.clipboard.writeText(url); } catch {}
+    setDone(true); setTimeout(() => setDone(false), 2200);
+  }
+  return (
+    <div style={ST.actionrow}>
+      <button style={ST.actbtn} onClick={go}>{done ? '✓ Link copied' : '🔗 Share link'}</button>
+      <a href={url} target="_blank" rel="noopener" style={{ ...ST.actbtn, textDecoration: 'none' }}>📄 Open PDF</a>
     </div>
   );
 }

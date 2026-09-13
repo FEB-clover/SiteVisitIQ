@@ -732,14 +732,15 @@ function SiteVisit({ prop, items, reports, activeId, memberIds, busy, onNew, onS
       <div style={D.h3}>Saved reports · {saved.length}</div>
       {!saved.length ? <div style={D.emptyBox}>No saved reports yet. Save a report and it lands here and in Archive.</div>
         : saved.map((r) => (
-          <button key={r.id} style={{ ...D.listrow, opacity: r.pdf_url ? 1 : 0.55 }} onClick={() => r.pdf_url && onOpenSaved(r.pdf_url)}>
+          <div key={r.id} style={{ ...D.listrow, cursor: 'default', opacity: r.pdf_url ? 1 : 0.55 }}>
             <span style={{ fontSize: 19 }}>📄</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, cursor: r.pdf_url ? 'pointer' : 'default' }} onClick={() => r.pdf_url && onOpenSaved(r.pdf_url)}>
               <div style={{ fontWeight: 700, fontSize: 15 }}>{r.name}</div>
               <div style={{ color: '#8b96a3', fontSize: 13 }}>{r.walker_name} · {String(r.walk_date).slice(0, 10)} · {r.item_count} issue{r.item_count === 1 ? '' : 's'}</div>
             </div>
-            <span style={{ color: '#0e5c63', fontWeight: 700, fontSize: 13.5 }}>Open PDF</span>
-          </button>
+            {r.pdf_url && <ShareBtns url={r.pdf_url} name={r.name} prop={draft?.property_name || prop?.name} show={show} />}
+            {r.pdf_url && <button style={{ color: '#0e5c63', fontWeight: 700, fontSize: 13.5, background: 'none' }} onClick={() => onOpenSaved(r.pdf_url)}>Open PDF</button>}
+          </div>
         ))}
     </div>
   );
@@ -845,6 +846,40 @@ function SiteVisit({ prop, items, reports, activeId, memberIds, busy, onNew, onS
       </div>
       {tail}
     </div>
+  );
+}
+
+
+/* Share a saved report by link instead of attaching a 20MB PDF to an email. */
+function ShareBtns({ url, name, prop, show }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch {}
+      ta.remove();
+    }
+    setCopied(true); if (show) show('Link copied — paste it into an email');
+    setTimeout(() => setCopied(false), 2200);
+  }
+  const subject = encodeURIComponent(`${prop ? prop + ' — ' : ''}${name}`);
+  const body = encodeURIComponent(`${name}\n\nView the site visit report:\n${url}\n`);
+  return (
+    <>
+      <button title="Copy a shareable link to this report" onClick={copy}
+        style={{ color: copied ? '#1e7d46' : '#4a5665', fontWeight: 600, fontSize: 13, background: '#eef2f6', borderRadius: 7, padding: '5px 10px' }}>
+        {copied ? '✓ Copied' : '🔗 Copy link'}
+      </button>
+      <a href={`mailto:?subject=${subject}&body=${body}`}
+        title="Open an email with the link already in it"
+        style={{ textDecoration: 'none', color: '#4a5665', fontWeight: 600, fontSize: 13, background: '#eef2f6', borderRadius: 7, padding: '5px 10px' }}>
+        ✉ Email link
+      </a>
+    </>
   );
 }
 
