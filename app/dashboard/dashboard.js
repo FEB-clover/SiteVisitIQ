@@ -675,6 +675,179 @@ function Agenda({ prop, items, onOpen, patch, onPhoto }) {
   );
 }
 
+/* ---------------- Site Visit (desktop) ---------------- */
+function SiteVisit({ prop, items, reports, activeId, memberIds, busy, onNew, onSetActive, onRemove, onSave, onPreview, onOpenSaved, onOpen, onPhoto, show }) {
+  const [sel, setSel] = useState([]);
+  const [dl, setDl] = useState(false);
+  const all = items || [];
+  const list = reports || [];
+  const draft = list.find((r) => r.id === activeId && r.status === 'draft');
+  const otherDrafts = list.filter((r) => r.status === 'draft' && r.id !== activeId);
+  const saved = list.filter((r) => r.status === 'saved');
+  const included = all.filter((i) => (memberIds || []).includes(i.id));
+  const marks = included
+    .map((it, i) => ({ it, n: i + 1 }))
+    .filter((m) => m.it.map_x != null && m.it.map_y != null)
+    .map((m) => ({ x: m.it.map_x, y: m.it.map_y, n: m.n, color: '#0e5c63' }));
+  const withPhotos = included.filter((i) => i.photos && i.photos.length);
+  const picked = withPhotos.filter((i) => sel.includes(i.id));
+  const photoCount = picked.reduce((n, i) => n + i.photos.length, 0);
+  const allSel = withPhotos.length > 0 && picked.length === withPhotos.length;
+
+  async function download() {
+    if (!picked.length) return;
+    setDl(true);
+    try {
+      const r = await fetch('/api/photos/download', { method: 'POST', headers: J, body: JSON.stringify({ item_ids: picked.map((i) => i.id) }) });
+      if (!r.ok) throw new Error('bad');
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = String(prop?.name || 'photos').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-') + '_photos.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      if (show) show(photoCount + ' photo' + (photoCount === 1 ? '' : 's') + ' downloaded');
+    } catch { if (show) show('Photo download failed'); }
+    setDl(false);
+  }
+
+  const tail = (
+    <div style={{ marginTop: 26 }}>
+      {otherDrafts.length > 0 && (
+        <>
+          <div style={D.h3}>Other drafts</div>
+          {otherDrafts.map((d) => (
+            <button key={d.id} style={D.listrow} onClick={() => onSetActive(d.id)}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{d.name}</div>
+                <div style={{ color: '#8b96a3', fontSize: 13 }}>{d.walker_name} · {String(d.walk_date).slice(0, 10)} · {d.item_count} issue{d.item_count === 1 ? '' : 's'}</div>
+              </div>
+              <span style={{ color: '#0e5c63', fontWeight: 700, fontSize: 13.5 }}>Make active →</span>
+            </button>
+          ))}
+          <div style={{ height: 18 }} />
+        </>
+      )}
+      <div style={D.h3}>Saved reports · {saved.length}</div>
+      {!saved.length ? <div style={D.emptyBox}>No saved reports yet. Save a report and it lands here and in Archive.</div>
+        : saved.map((r) => (
+          <button key={r.id} style={{ ...D.listrow, opacity: r.pdf_url ? 1 : 0.55 }} onClick={() => r.pdf_url && onOpenSaved(r.pdf_url)}>
+            <span style={{ fontSize: 19 }}>📄</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{r.name}</div>
+              <div style={{ color: '#8b96a3', fontSize: 13 }}>{r.walker_name} · {String(r.walk_date).slice(0, 10)} · {r.item_count} issue{r.item_count === 1 ? '' : 's'}</div>
+            </div>
+            <span style={{ color: '#0e5c63', fontWeight: 700, fontSize: 13.5 }}>Open PDF</span>
+          </button>
+        ))}
+    </div>
+  );
+
+  if (!draft) return (
+    <div>
+      <div style={{ ...D.emptyBox, textAlign: 'center', padding: '42px 24px' }}>
+        <div style={{ fontSize: 17, color: '#4a5665', marginBottom: 6 }}>No Site Visit report in progress.</div>
+        <div style={{ fontSize: 14, marginBottom: 16 }}>Start one, then add issues from the Queue or from inside any issue.</div>
+        <button style={D.newbtn2} onClick={onNew}>＋ New Site Visit Report</button>
+      </div>
+      {tail}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ ...D.card, marginBottom: 18, display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 320px', minWidth: 260 }}>
+          <div style={{ fontWeight: 800, fontSize: 19, color: '#0d1620' }}>{draft.name}</div>
+          <div style={{ color: '#4a5665', fontSize: 14, marginTop: 4 }}>
+            {draft.property_name || prop?.name}{(draft.property_address || prop?.address) ? ' · ' + (draft.property_address || prop.address) : ''}
+          </div>
+          <div style={{ color: '#8b96a3', fontSize: 13.5, marginTop: 2 }}>
+            {String(draft.walk_date).slice(0, 10)} · Walked by {draft.walker_name} · {included.length} issue{included.length === 1 ? '' : 's'}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+          <button style={{ ...D.printbtn, opacity: included.length ? 1 : 0.4, pointerEvents: included.length ? 'auto' : 'none' }} onClick={() => onPreview(draft.id)}>📄 Preview</button>
+          <button style={{ ...D.newbtn, opacity: included.length && !busy ? 1 : 0.5, pointerEvents: included.length && !busy ? 'auto' : 'none' }} onClick={() => onSave(draft.id)}>{busy ? 'Saving…' : 'Save report'}</button>
+          <button style={D.ghostDark} onClick={onNew}>＋ New</button>
+        </div>
+      </div>
+
+      <div style={D.split}>
+        <div style={D.splitMap}>
+          <SecHead>Site map · issue locations</SecHead>
+          {prop?.site_map_url
+            ? <MouseZoom src={prop.site_map_url} markers={marks} maxHeight={520} />
+            : <div style={D.emptyBox}>No site map loaded for this property.</div>}
+          {included.length > marks.length && (
+            <div style={{ color: '#8b96a3', fontSize: 13, marginTop: 8 }}>
+              {included.length - marks.length} issue{included.length - marks.length === 1 ? '' : 's'} not pinned yet — open an issue and click the map to place it.
+            </div>
+          )}
+        </div>
+
+        <div style={D.splitList}>
+          <div style={D.secheadrow}>
+            <span>On this walk · {included.length}</span>
+            {withPhotos.length > 0 && (
+              <button style={D.linkbtn2} onClick={() => setSel(allSel ? [] : withPhotos.map((i) => i.id))}>
+                {allSel ? 'Clear photo selection' : 'Select all photos'}
+              </button>
+            )}
+          </div>
+
+          {!included.length ? (
+            <div style={D.emptyBox}>Nothing added yet. On the Queue, click <b>Site Visit</b> on any issue — or open an issue and use <b>Add to Site Visit</b>.</div>
+          ) : included.map((it, i) => {
+            const has = !!(it.photos && it.photos.length);
+            const on = sel.includes(it.id);
+            return (
+              <div key={it.id} style={D.agitem}>
+                <span style={{ ...D.agnum, background: '#0e5c63' }}>{i + 1}</span>
+                {has
+                  ? <img src={it.photos[0]} alt="" style={D.rowThumb} onClick={() => onPhoto(it.photos, 0, it.photos.map((_, k) => it.title + ' · ' + (k + 1)))} />
+                  : <div style={{ ...D.rowThumb, ...D.thumbEmpty, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>—</div>}
+                <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onOpen(it)}>
+                  <div style={{ fontWeight: 700, fontSize: 15.5 }}>{it.title}</div>
+                  {(it.notes || it.detail) && <div style={{ color: '#4a5665', fontSize: 13.5, marginTop: 3 }}>{it.notes || it.detail}</div>}
+                  <div style={{ color: '#8b96a3', fontSize: 12.5, marginTop: 4 }}>
+                    <span style={{ color: RCOLOR[it.priority], fontWeight: 700 }}>{RLABEL[it.priority] || it.priority}</span>
+                    {it.life_safety ? ' · Life safety' : ''}{it.category ? ' · ' + it.category : ''}
+                    {has ? ' · ' + it.photos.length + ' photo' + (it.photos.length === 1 ? '' : 's') : ' · no photos'}
+                    {it.map_x == null ? ' · not on map' : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  {has && (
+                    <button title="Include these photos in the download" onClick={() => setSel((s) => (s.includes(it.id) ? s.filter((x) => x !== it.id) : [...s, it.id]))}
+                      style={{ ...D.checkbox, background: on ? '#0e5c63' : '#fff', borderColor: on ? '#0e5c63' : '#c3ccd6' }}>{on ? '✓' : ''}</button>
+                  )}
+                  <button style={D.rowx} title="Remove from report" onClick={() => onRemove(it.id)}>✕</button>
+                </div>
+              </div>
+            );
+          })}
+
+          {withPhotos.length > 0 && (
+            <div style={{ ...D.card, marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 180px', color: '#4a5665', fontSize: 14 }}>
+                {picked.length
+                  ? <><b>{photoCount}</b> photo{photoCount === 1 ? '' : 's'} from {picked.length} issue{picked.length === 1 ? '' : 's'} selected</>
+                  : <>Tick the boxes to pick photos to save or email.</>}
+              </div>
+              <button style={{ ...D.newbtn2, opacity: picked.length && !dl ? 1 : 0.45, pointerEvents: picked.length && !dl ? 'auto' : 'none' }} onClick={download}>
+                {dl ? 'Preparing…' : '⬇ Download photos (.zip)'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {tail}
+    </div>
+  );
+}
+
 /* ---------------- Plans ---------------- */
 function Plans({ prop, onPhoto }) {
   const floors = prop.floors || [];
