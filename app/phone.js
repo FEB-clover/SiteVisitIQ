@@ -98,11 +98,17 @@ function Zoomable({ src, markers, placing, onPlace, minHeight = 200, fit = 'aspe
   );
 }
 
+// stroke weights as a fraction of image width — 'marker' is the default
+// because a hairline is unreadable once a photo is printed or emailed
+const PEN_W = [0.006, 0.013, 0.022];
+const PEN_DEFAULT = 2;   // bold — reads clearly on a printed report and on a phone
+
 function Markup({ src, itemId, onClose, onSaved, onToast }) {
   const cvsRef = useRef(null), imgRef = useRef(null);
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#cd4428');
   const [strokes, setStrokes] = useState([]);
+  const [pen, setPen] = useState(2);   // 0 fine · 1 marker · 2 bold (default)
   const [live, setLive] = useState(null);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -113,8 +119,11 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.drawImage(img, 0, 0, c.width, c.height);
-    const lw = Math.max(3, c.width / 240);
     for (const st of (live ? [...strokes, live] : strokes)) {
+      // width is a fraction of the image, so a mark looks the same weight
+      // whether the photo is 800px or 4000px wide. Stored per stroke, so
+      // changing the size later never rewrites marks you already made.
+      const lw = Math.max(3, c.width * (st.w || PEN_W[PEN_DEFAULT]));
       ctx.strokeStyle = st.color; ctx.fillStyle = st.color;
       ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       if (st.type === 'pen') { ctx.beginPath(); st.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke(); }
@@ -140,7 +149,8 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
   useEffect(() => { if (ready) redraw(); }, [ready, redraw]);
 
   const pos = (e) => { const c = cvsRef.current, r = c.getBoundingClientRect(); return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) }; };
-  const down = (e) => { if (!ready) return; e.currentTarget.setPointerCapture?.(e.pointerId); const p = pos(e); setLive(tool === 'pen' ? { type: 'pen', color, pts: [p] } : { type: tool, color, a: p, b: p }); };
+  const down = (e) => { if (!ready) return; try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {} const p = pos(e); const w = PEN_W[pen];
+    setLive(tool === 'pen' ? { type: 'pen', color, w, pts: [p] } : { type: tool, color, w, a: p, b: p }); };
   const move = (e) => { if (!live) return; const p = pos(e); setLive((s) => (s.type === 'pen' ? { ...s, pts: [...s.pts, p] } : { ...s, b: p })); };
   const up = () => { if (live) { setStrokes((s) => [...s, live]); setLive(null); } };
 
@@ -153,9 +163,14 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
     fd.append('file', new File([blob], 'markup.jpg', { type: 'image/jpeg' }));
     fd.append('itemId', String(itemId));
     const r = await fetch('/api/photos', { method: 'POST', body: fd });
+    if (!r.ok) { setBusy(false); onToast('Could not save the marked-up photo'); return; }
+    // the marked copy takes the original's place — otherwise every markup
+    // leaves a duplicate that also lands in the report
+    if (/^https?:/.test(src)) {
+      try { await fetch('/api/photos?url=' + encodeURIComponent(src), { method: 'DELETE' }); } catch {}
+    }
     setBusy(false);
-    if (!r.ok) { onToast('Could not save the marked-up photo'); return; }
-    onToast('Marked-up photo saved'); onSaved();
+    onToast('Markup saved'); onSaved();
   }
 
   const tb = (id, label) => <button key={id} onClick={() => setTool(id)} style={{ ...ST.mkTool, ...(tool === id ? ST.mkToolOn : {}) }}>{label}</button>;
@@ -163,7 +178,7 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
     <div style={ST.mkWrap}>
       <div style={ST.mkTop}>
         <button style={ST.mkCancel} onClick={onClose}>Cancel</button>
-        <button style={ST.mkSave} onClick={saveMarkup} disabled={!strokes.length || busy}>{busy ? 'Saving…' : 'Save photo'}</button>
+        <button style={ST.mkSave} onClick={saveMarkup} disabled={!strokes.length || busy}>{busy ? 'Saving…' : 'Save markup'}</button>
       </div>
       <div style={ST.mkStage}>
         <canvas ref={cvsRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
@@ -172,21 +187,33 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
       <div style={ST.mkBar}>
         {tb('pen', '✎')}{tb('arrow', '↗')}{tb('circle', '◯')}
         <span style={{ width: 1, height: 24, background: '#33414f' }} />
+        {PEN_W.map((w, i) => (
+          <button key={i} onClick={() => setPen(i)} title={['Fine', 'Marker', 'Bold'][i]}
+            style={{ width: 34, height: 34, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: pen === i ? '#0e5c63' : 'transparent', border: pen === i ? 'none' : '1px solid #55606c' }}>
+            <span style={{ display: 'block', width: 20, height: 3 + i * 3.5, borderRadius: 4, background: pen === i ? '#fff' : '#b7c1cc' }} />
+          </button>
+        ))}
+        <span style={{ width: 1, height: 24, background: '#33414f' }} />
         {COLORS.map((c) => <button key={c} onClick={() => setColor(c)} style={{ width: 28, height: 28, borderRadius: '50%', background: c, border: color === c ? '3px solid #fff' : '1px solid #55606c' }} />)}
         <span style={{ width: 1, height: 24, background: '#33414f' }} />
         <button style={ST.mkTool} onClick={() => setStrokes((s) => s.slice(0, -1))}>↶</button>
       </div>
       <div style={{ textAlign: 'center', color: '#8b96a3', fontSize: 12.5, padding: '4px 0 calc(10px + env(safe-area-inset-bottom))' }}>
-        Draw with your finger · the original photo is kept
+        Draw with your finger · saving replaces the original
       </div>
     </div>
   );
 }
 
-function PhotoViewer({ src, onClose }) {
+function PhotoViewer({ src, itemId, onMarkup, onClose }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 80, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: 10, paddingTop: 'calc(10px + env(safe-area-inset-top))' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: 10, paddingTop: 'calc(10px + env(safe-area-inset-top))' }}>
+        {/* zoom in, spot the problem, mark it — without backing out first */}
+        {itemId && onMarkup
+          ? <button onClick={() => onMarkup(src, itemId)} style={ST.viewerMark}>✎ Mark up</button>
+          : <span />}
         <button onClick={onClose} style={{ color: '#fff', fontSize: 22.5, padding: '6px 14px' }}>✕ Close</button>
       </div>
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', padding: 6 }}><div style={{ width: '100%' }}><Zoomable src={src} minHeight={260} /></div></div>
@@ -382,12 +409,13 @@ export default function Phone({ user }) {
         </>
       )}
       {sheet && (
-        <ItemSheet mode={sheet.mode} item={sheet.item} prop={prop} onClose={() => setSheet(null)} onViewPhoto={setViewer} openReport={openReport}
+        <ItemSheet mode={sheet.mode} item={sheet.item} prop={prop} onClose={() => setSheet(null)} onViewPhoto={(src, itemId) => setViewer({ src, itemId })} openReport={openReport}
           onMarkup={(src, itemId) => setMarkup({ src, itemId })}
           onSiteVisit={toggleSiteVisit} inSv={sheet.item ? svItems.includes(sheet.item.id) : false}
           onSaved={() => { setSheet(null); loadItems(pid).then(loadProps); show('Saved'); }} onToast={show} />
       )}
-      {viewer && <PhotoViewer src={viewer} onClose={() => setViewer(null)} />}
+      {viewer && <PhotoViewer src={viewer.src} itemId={viewer.itemId} onClose={() => setViewer(null)}
+        onMarkup={(src, itemId) => { setViewer(null); setMarkup({ src, itemId }); }} />}
       {markup && <Markup src={markup.src} itemId={markup.itemId} onClose={() => setMarkup(null)} onToast={show}
         onSaved={() => { setMarkup(null); loadItems(pid); }} />}
       {report && <ReportViewer url={report.url} filename={report.filename} onClose={() => setReport(null)} />}
@@ -852,25 +880,55 @@ function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, o
   const [busy, setBusy] = useState(false);
   const [placing, setPlacing] = useState(false);
   const fileRef = useRef();
-  const pendingFile = useRef(null);
+  // Once a photo exists the issue has to exist too, or there is nothing to
+  // attach markup to. liveId is the row we are working against: the item we
+  // were opened with, or one created the moment the first photo lands.
+  const [liveId, setLiveId] = useState(item?.id || null);
+  const live = editing || !!liveId;
 
+  async function ensureItem() {
+    if (liveId) return liveId;
+    const r = await fetch('/api/items', { method: 'POST', headers: J,
+      body: JSON.stringify({ property_id: prop.id, title: title.trim() || 'Untitled — this visit',
+        priority: rating, category, life_safety: ls, send_todo: todo, on_agenda: agenda,
+        notes, source: 'Field entry', map_x: pin?.x ?? null, map_y: pin?.y ?? null }) });
+    if (!r.ok) { onToast('Could not start the issue'); return null; }
+    const j = await r.json();
+    if (!j.item?.id) { onToast('Could not start the issue'); return null; }
+    setLiveId(j.item.id);
+    return j.item.id;
+  }
+
+  // multiple files at once — the picker now offers camera *and* library
   async function pickPhoto(e) {
-    const file = e.target.files?.[0]; if (!file) return;
-    const small = await downscale(file);
-    if (editing) { await uploadPhoto(item.id, small); setPhotos((p) => [...p, URL.createObjectURL(small)]); onToast('Photo added'); }
-    else { pendingFile.current = small; setPhotos([URL.createObjectURL(small)]); }
+    const files = [...(e.target.files || [])];
     e.target.value = '';
+    if (!files.length) return;
+    const id = await ensureItem();
+    if (!id) return;
+    setBusy(true);
+    for (const f of files) {
+      const small = await downscale(f);
+      const url = await uploadPhoto(id, small);
+      if (url) setPhotos((p) => [...p, url]);
+    }
+    setBusy(false);
+    onToast(files.length > 1 ? files.length + ' photos added' : 'Photo added');
+  }
+
+  async function dropPhoto(url) {
+    setPhotos((p) => p.filter((u) => u !== url));
+    try { await fetch('/api/photos?url=' + encodeURIComponent(url), { method: 'DELETE' }); } catch {}
+    onToast('Photo removed');
   }
   async function save() {
     if (!title.trim()) return onToast('Add a short title');
     setBusy(true);
     try {
-      if (editing) {
-        await fetch('/api/items/' + item.id, { method: 'PATCH', headers: J, body: JSON.stringify({ title, priority: rating, category, life_safety: ls, send_todo: todo, on_agenda: agenda, status, notes, detail, office_note: office, map_x: pin?.x ?? null, map_y: pin?.y ?? null }) });
+      if (liveId) {
+        await fetch('/api/items/' + liveId, { method: 'PATCH', headers: J, body: JSON.stringify({ title, priority: rating, category, life_safety: ls, send_todo: todo, on_agenda: agenda, status, notes, detail, office_note: office, map_x: pin?.x ?? null, map_y: pin?.y ?? null }) });
       } else {
-        const r = await fetch('/api/items', { method: 'POST', headers: J, body: JSON.stringify({ property_id: prop.id, title, priority: rating, category, life_safety: ls, send_todo: todo, on_agenda: agenda, notes, source: 'Field entry', map_x: pin?.x ?? null, map_y: pin?.y ?? null }) });
-        const j = await r.json();
-        if (j.item && pendingFile.current) await uploadPhoto(j.item.id, pendingFile.current);
+        await fetch('/api/items', { method: 'POST', headers: J, body: JSON.stringify({ property_id: prop.id, title, priority: rating, category, life_safety: ls, send_todo: todo, on_agenda: agenda, notes, source: 'Field entry', map_x: pin?.x ?? null, map_y: pin?.y ?? null }) });
       }
       onSaved();
     } catch { onToast('Save failed'); setBusy(false); }
@@ -889,18 +947,20 @@ function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, o
           </div>
         </div>
 
-        {editing && photos.length > 0 && (
+        {photos.length > 0 && (
           <div style={{ marginBottom: 6 }}>
             <div style={{ position: 'relative' }}>
-              <img src={photos[0]} alt="" onClick={() => onViewPhoto(photos[0])} style={{ width: '100%', borderRadius: 10, border: '1px solid var(--line)' }} />
-              {onMarkup && item?.id && <button style={ST.markbtn} onClick={() => onMarkup(photos[0], item.id)}>✎ Mark up</button>}
+              <img src={photos[0]} alt="" onClick={() => onViewPhoto(photos[0], liveId)} style={{ width: '100%', borderRadius: 10, border: '1px solid var(--line)' }} />
+              {onMarkup && liveId && <button style={ST.markbtn} onClick={() => onMarkup(photos[0], liveId)}>✎ Mark up</button>}
+              {liveId && <button style={ST.dropbtn} onClick={() => dropPhoto(photos[0])} aria-label="Remove photo">✕</button>}
             </div>
-            {photos.length > 1 && <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>{photos.slice(1).map((u, i) => (
+            {photos.length > 1 && <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>{photos.slice(1).map((u, i) => (
               <div key={i} style={{ position: 'relative' }}>
-                <img src={u} alt="" onClick={() => onViewPhoto(u)} style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8 }} />
-                {onMarkup && item?.id && <button style={{ ...ST.markbtn, fontSize: 9.5, padding: '1px 4px' }} onClick={() => onMarkup(u, item.id)}>✎</button>}
+                <img src={u} alt="" onClick={() => onViewPhoto(u, liveId)} style={{ width: 92, height: 92, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line)' }} />
+                {onMarkup && liveId && <button style={ST.markbtnSm} onClick={() => onMarkup(u, liveId)}>✎</button>}
+                {liveId && <button style={ST.dropbtnSm} onClick={() => dropPhoto(u)} aria-label="Remove photo">✕</button>}
               </div>))}</div>}
-            <div style={{ textAlign: 'center', color: 'var(--muted2)', fontSize: 12.5, marginTop: 4 }}>Tap the photo to zoom</div>
+            <div style={{ textAlign: 'center', color: 'var(--muted2)', fontSize: 12.5, marginTop: 6 }}>Tap a photo to zoom · ✎ to draw on it · ✕ to remove</div>
           </div>
         )}
 
@@ -945,11 +1005,14 @@ function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, o
           </>
         )}
 
-        <label style={ST.lbl}>{editing ? 'Add another photo' : 'Photo'}</label>
+        <label style={ST.lbl}>{photos.length ? 'Add more photos' : 'Photos'}</label>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {!editing && photos.map((u, i) => <img key={i} src={u} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8 }} />)}
-          <button style={ST.addPhoto} onClick={() => fileRef.current?.click()}>＋</button>
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={pickPhoto} />
+          <button style={ST.addPhoto} onClick={() => fileRef.current?.click()} disabled={busy}>＋</button>
+          <div style={{ color: 'var(--muted2)', fontSize: 13, flex: 1, minWidth: 140 }}>
+            {busy ? 'Uploading…' : 'Take a photo or choose from your library — you can pick several at once.'}
+          </div>
+          {/* no capture attribute: iOS then offers Photo Library as well as the camera */}
+          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={pickPhoto} />
         </div>
 
         <label style={ST.lbl}>Location on site map</label>
@@ -989,7 +1052,12 @@ function Loading() { return <div className="center" style={{ minHeight: 220 }}><
 
 async function uploadPhoto(itemId, file) {
   const fd = new FormData(); fd.append('file', file, 'photo.jpg'); fd.append('itemId', String(itemId));
-  await fetch('/api/photos', { method: 'POST', body: fd });
+  try {
+    const r = await fetch('/api/photos', { method: 'POST', body: fd });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.url || null;     // the real URL, so markup and remove can address it
+  } catch { return null; }
 }
 function downscale(file, max = 1600, q = 0.82) {
   return new Promise((res) => {
@@ -1009,7 +1077,14 @@ const ST = {
   top: { position: 'sticky', top: 0, zIndex: 20, background: 'var(--navy)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', paddingTop: 'calc(10px + env(safe-area-inset-top))' },
   dashBtn: { background: '#1b2a3d', color: '#cdd8e4', fontSize: 14, fontWeight: 600, padding: '6px 11px', borderRadius: 8 },
   who: { color: '#9fb0c2', fontSize: 14, fontWeight: 600 },
-  markbtn: { position: 'absolute', left: 8, bottom: 8, fontSize: 11.5, fontWeight: 700, color: '#fff', background: 'rgba(14,92,99,.92)', padding: '3px 8px', borderRadius: 7 },
+  viewerMark: { color: '#fff', fontSize: 15.5, fontWeight: 700, background: 'rgba(14,92,99,.94)', padding: '9px 16px', borderRadius: 10 },
+  markbtn: { position: 'absolute', left: 8, bottom: 8, fontSize: 14, fontWeight: 700, color: '#fff', background: 'rgba(14,92,99,.94)', padding: '8px 14px', borderRadius: 9, minHeight: 36 },
+  markbtnSm: { position: 'absolute', left: 4, bottom: 4, width: 30, height: 30, fontSize: 14, fontWeight: 700, color: '#fff',
+    background: 'rgba(14,92,99,.94)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  dropbtn: { position: 'absolute', right: 8, top: 8, width: 34, height: 34, fontSize: 15, fontWeight: 700, color: '#fff',
+    background: 'rgba(13,22,32,.66)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  dropbtnSm: { position: 'absolute', right: 4, top: 4, width: 26, height: 26, fontSize: 12.5, fontWeight: 700, color: '#fff',
+    background: 'rgba(13,22,32,.66)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   mkWrap: { position: 'fixed', inset: 0, background: '#0b1218', zIndex: 90, display: 'flex', flexDirection: 'column' },
   mkTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'calc(10px + env(safe-area-inset-top)) 14px 10px' },
   mkStage: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8, minHeight: 0 },

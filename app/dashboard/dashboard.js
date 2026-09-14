@@ -113,11 +113,17 @@ function MouseZoom({ src, markers, placing, onPlace, minHeight = 260, maxHeight 
 }
 
 /* full-screen zoomable viewer for a photo or a plan sheet */
+// stroke weights as a fraction of image width — 'marker' is the default
+// because a hairline is unreadable once a photo is printed or emailed
+const PEN_W = [0.006, 0.013, 0.022];
+const PEN_DEFAULT = 2;   // bold — reads clearly on a printed report and on a phone
+
 function Markup({ src, itemId, onClose, onSaved, onToast }) {
   const wrapRef = useRef(null), cvsRef = useRef(null), imgRef = useRef(null);
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#cd4428');
   const [strokes, setStrokes] = useState([]);
+  const [pen, setPen] = useState(2);   // 0 fine · 1 marker · 2 bold (default)
   const [live, setLive] = useState(null);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -129,9 +135,12 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.drawImage(img, 0, 0, c.width, c.height);
-    const lw = Math.max(3, c.width / 260);
     const all = live ? [...strokes, live] : strokes;
     for (const st of all) {
+      // width is a fraction of the image, so a mark looks the same weight
+      // whether the photo is 800px or 4000px wide. Stored per stroke, so
+      // changing the size later never rewrites marks you already made.
+      const lw = Math.max(3, c.width * (st.w || PEN_W[PEN_DEFAULT]));
       ctx.strokeStyle = st.color; ctx.fillStyle = st.color;
       ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       if (st.type === 'pen') {
@@ -174,9 +183,10 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
   };
   const down = (e) => {
     if (!ready) return;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch {}
     const p = pos(e);
-    setLive(tool === 'pen' ? { type: 'pen', color, pts: [p] } : { type: tool, color, a: p, b: p });
+    const w = PEN_W[pen];
+    setLive(tool === 'pen' ? { type: 'pen', color, w, pts: [p] } : { type: tool, color, w, a: p, b: p });
   };
   const move = (e) => {
     if (!live) return;
@@ -194,9 +204,13 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
     fd.append('file', new File([blob], 'markup.jpg', { type: 'image/jpeg' }));
     fd.append('itemId', String(itemId));
     const r = await fetch('/api/photos', { method: 'POST', body: fd });
+    if (!r.ok) { setBusy(false); onToast('Could not save the marked-up photo'); return; }
+    // replace, don't duplicate — same rule as the field app
+    if (/^https?:/.test(src)) {
+      try { await fetch('/api/photos?url=' + encodeURIComponent(src), { method: 'DELETE' }); } catch {}
+    }
     setBusy(false);
-    if (!r.ok) { onToast('Could not save the marked-up photo'); return; }
-    onToast('Marked-up photo saved to the issue');
+    onToast('Markup saved');
     onSaved();
   }
 
@@ -209,6 +223,14 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {tbtn('pen', '✎ Pen')}{tbtn('arrow', '↗ Arrow')}{tbtn('circle', '◯ Circle')}
           <span style={{ width: 1, height: 22, background: '#33414f', margin: '0 4px' }} />
+          {PEN_W.map((w, i) => (
+            <button key={i} onClick={() => setPen(i)} title={['Fine', 'Marker', 'Bold'][i]}
+              style={{ width: 40, height: 34, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: pen === i ? '#0e5c63' : 'transparent', border: pen === i ? 'none' : '1px solid #55606c' }}>
+              <span style={{ display: 'block', width: 22, height: 3 + i * 3.5, borderRadius: 4, background: pen === i ? '#fff' : '#b7c1cc' }} />
+            </button>
+          ))}
+          <span style={{ width: 1, height: 22, background: '#33414f', margin: '0 4px' }} />
           {COLORS.map((c) => (
             <button key={c} onClick={() => setColor(c)}
               style={{ width: 24, height: 24, borderRadius: '50%', background: c, border: color === c ? '3px solid #fff' : '1px solid #55606c' }} />
@@ -219,7 +241,7 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button style={D.mkCancel} onClick={onClose}>Cancel</button>
-          <button style={D.mkSave} onClick={saveMarkup} disabled={!strokes.length || busy}>{busy ? 'Saving…' : 'Save as new photo'}</button>
+          <button style={D.mkSave} onClick={saveMarkup} disabled={!strokes.length || busy}>{busy ? 'Saving…' : 'Save markup'}</button>
         </div>
       </div>
       <div ref={wrapRef} style={D.mkStage}>
@@ -227,13 +249,13 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
           style={{ height: '100%', width: 'auto', maxWidth: '100%', cursor: 'crosshair', touchAction: 'none', borderRadius: 8, background: '#000' }} />
       </div>
       <div style={{ textAlign: 'center', color: '#8b96a3', fontSize: 13, padding: '8px 0 14px' }}>
-        Click and drag on the photo to mark it. The original photo is kept — this saves as an additional photo on the issue.
+        Click and drag on the photo to mark it. Saving replaces the original, so the issue keeps one photo per shot.
       </div>
     </div>
   );
 }
 
-function Lightbox({ srcs, start = 0, labels, onClose, onPrint }) {
+function Lightbox({ srcs, start = 0, labels, onClose, onPrint, itemId, onMarkup }) {
   const [i, setI] = useState(start);
   useEffect(() => {
     document.body.style.overflow = 'hidden';
@@ -246,6 +268,9 @@ function Lightbox({ srcs, start = 0, labels, onClose, onPrint }) {
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(6,10,15,.94)', zIndex: 90, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', color: '#fff', flex: 'none' }}>
         <div style={{ fontWeight: 700, fontSize: 15.5, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{labels?.[i] || ''}{many ? `   ·   ${i + 1} / ${srcs.length}` : ''}</div>
+        {/* zoom in, spot the problem, mark it — without closing first */}
+        {itemId && onMarkup && <button style={{ ...Z.viewerBtn, background: '#0e5c63', borderColor: '#0e5c63', color: '#fff' }}
+          onClick={() => onMarkup(srcs[i], itemId)}>✎ Mark up</button>}
         {onPrint && <button style={Z.viewerBtn} onClick={() => onPrint(i)}>📄 Save / Print</button>}
         <button style={Z.viewerBtn} onClick={onClose}>✕ Close</button>
       </div>
@@ -348,7 +373,7 @@ export default function Dashboard({ user }) {
   }, [pid, show, loadReports, load]);
 
   function openProp(id) { setPid(id); setTab('queue'); setView('property'); loadReports(id); }
-  function openPhotos(srcs, start = 0, labels, onPrint) { setLightbox({ srcs, start, labels, onPrint }); }
+  function openPhotos(srcs, start = 0, labels, onPrint, itemId) { setLightbox({ srcs, start, labels, onPrint, itemId }); }
 
   const patch = useCallback(async (id, body, msg) => {
     setItems((its) => its.map((i) => (i.id === id ? { ...i, ...body } : i)));
@@ -457,7 +482,9 @@ export default function Dashboard({ user }) {
       {editItem && <ItemModal item={editItem} prop={props.find((p) => p.id === editItem.property_id)} pname={props.find((p) => p.id === editItem.property_id)?.name || editItem.property_id} onClose={() => setEditItem(null)} onSaved={load} onPhoto={openPhotos} onToast={show} onSiteVisit={toggleSiteVisit} inSv={svItems.includes(editItem.id)} onMarkup={(src) => setMarkup({ src, itemId: editItem.id })} />}
       {newOpen && <NewIssueModal props={props} defaultPid={view === 'property' ? pid : null} onClose={() => setNewOpen(false)} onDone={() => { setNewOpen(false); load(); show('Issue added'); }} onPhoto={openPhotos} />}
       {usersOpen && <UsersModal onClose={() => setUsersOpen(false)} />}
-      {lightbox && <Lightbox srcs={lightbox.srcs} start={lightbox.start} labels={lightbox.labels} onClose={() => setLightbox(null)} onPrint={lightbox.onPrint} />}
+      {lightbox && <Lightbox srcs={lightbox.srcs} start={lightbox.start} labels={lightbox.labels} onClose={() => setLightbox(null)}
+        onPrint={lightbox.onPrint} itemId={lightbox.itemId}
+        onMarkup={(src, itemId) => { setLightbox(null); setMarkup({ src, itemId }); }} />}
       {markup && <Markup src={markup.src} itemId={markup.itemId} onClose={() => setMarkup(null)} onToast={show} onSaved={() => { setMarkup(null); load(); }} />}
       {toast && <div style={D.toast}>{toast}</div>}
     </div>
@@ -643,7 +670,7 @@ function IssueCard({ it, onOpen, patch, onPhoto, onSiteVisit, inSv }) {
     <div style={D.card}>
       <div style={{ display: 'flex', gap: 12, cursor: 'pointer' }} onClick={() => onOpen(it)}>
         {it.photos?.[0]
-          ? <img src={it.photos[0]} alt="" style={D.cardThumb} onClick={(e) => { e.stopPropagation(); onPhoto(it.photos, 0, it.photos.map(() => it.title)); }} />
+          ? <img src={it.photos[0]} alt="" style={D.cardThumb} onClick={(e) => { e.stopPropagation(); onPhoto(it.photos, 0, it.photos.map(() => it.title), null, it.id); }} />
           : <div style={{ ...D.cardThumb, ...D.thumbEmpty }}>—</div>}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -686,7 +713,7 @@ function Critical({ prop, items, onOpen, onPhoto }) {
           crit.map((it, i) => (
             <button key={it.id} style={D.listrow} onClick={() => onOpen(it)}>
               <span style={D.critnum}>{i + 1}</span>
-              {it.photos?.[0] ? <img src={it.photos[0]} alt="" style={D.rowThumb} onClick={(e) => { e.stopPropagation(); onPhoto(it.photos, 0, it.photos.map(() => it.title)); }} /> : <div style={{ ...D.rowThumb, ...D.thumbEmpty }}>—</div>}
+              {it.photos?.[0] ? <img src={it.photos[0]} alt="" style={D.rowThumb} onClick={(e) => { e.stopPropagation(); onPhoto(it.photos, 0, it.photos.map(() => it.title), null, it.id); }} /> : <div style={{ ...D.rowThumb, ...D.thumbEmpty }}>—</div>}
               <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <span style={{ ...D.ratebadge, background: RCOLOR[it.priority] || '#6b7684' }}>{(RLABEL[it.priority] || it.priority || '').toUpperCase()}</span>
@@ -872,7 +899,7 @@ function SiteVisit({ prop, items, reports, activeId, memberIds, busy, onNew, onS
               <div key={it.id} style={D.agitem}>
                 <span style={{ ...D.agnum, background: '#0e5c63' }}>{i + 1}</span>
                 {has
-                  ? <img src={it.photos[0]} alt="" style={D.rowThumb} onClick={() => onPhoto(it.photos, 0, it.photos.map((_, k) => it.title + ' · ' + (k + 1)))} />
+                  ? <img src={it.photos[0]} alt="" style={D.rowThumb} onClick={() => onPhoto(it.photos, 0, it.photos.map((_, k) => it.title + ' · ' + (k + 1)), null, it.id)} />
                   : <div style={{ ...D.rowThumb, ...D.thumbEmpty, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>—</div>}
                 <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onOpen(it)}>
                   <div style={{ fontWeight: 700, fontSize: 15.5 }}>{it.title}</div>
@@ -994,7 +1021,7 @@ function Archive({ items, onOpen, patch, onPhoto }) {
           {arc.map((it) => (
             <div key={it.id} style={D.card}>
               <div style={{ display: 'flex', gap: 12, cursor: 'pointer' }} onClick={() => onOpen(it)}>
-                {it.photos?.[0] ? <img src={it.photos[0]} alt="" style={D.cardThumb} onClick={(e) => { e.stopPropagation(); onPhoto(it.photos, 0, it.photos.map(() => it.title)); }} /> : <div style={{ ...D.cardThumb, ...D.thumbEmpty }}>—</div>}
+                {it.photos?.[0] ? <img src={it.photos[0]} alt="" style={D.cardThumb} onClick={(e) => { e.stopPropagation(); onPhoto(it.photos, 0, it.photos.map(() => it.title), null, it.id); }} /> : <div style={{ ...D.cardThumb, ...D.thumbEmpty }}>—</div>}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 15.5 }}>{it.title}</div>
                   <div style={{ color: '#8b96a3', fontSize: 13, marginTop: 2 }}>{it.category || ''}{it.source ? ' · ' + it.source : ''}</div>
@@ -1105,7 +1132,7 @@ function AllIssues({ props, items, onBack, onOpen, patch, onPhoto }) {
           </div>
           <div style={{ flex: 'none', width: 66 }}>
             {it.photos?.[0]
-              ? <img src={it.photos[0]} alt="" style={D.rowThumb2} onClick={() => onPhoto(it.photos, 0, it.photos.map(() => it.title))} />
+              ? <img src={it.photos[0]} alt="" style={D.rowThumb2} onClick={() => onPhoto(it.photos, 0, it.photos.map(() => it.title), null, it.id)} />
               : <div style={{ ...D.rowThumb2, ...D.thumbEmpty }}>—</div>}
             <button style={D.addphoto} disabled={busyPhoto === it.id} onClick={() => pickPhoto(it.id)}>{busyPhoto === it.id ? '…' : (it.photos?.length ? '+ Photo' : 'Add photo')}</button>
           </div>
@@ -1208,7 +1235,7 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                   {photos.map((u, i) => (
                     <div key={i} style={{ position: 'relative' }}>
-                      <img src={u} alt="" onClick={() => onPhoto(photos, i, photos.map(() => title))} style={D.modalThumb} />
+                      <img src={u} alt="" onClick={() => onPhoto(photos, i, photos.map(() => title), null, item.id)} style={D.modalThumb} />
                       {onMarkup && <button style={D.markbtn} title="Draw on this photo" onClick={(e) => { e.stopPropagation(); onMarkup(u); }}>✎ Mark</button>}
                     </div>
                   ))}

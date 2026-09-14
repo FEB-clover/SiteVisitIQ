@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { put } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import { sql, ensureSchema } from '../../../lib/db';
 import { currentUser } from '../../../lib/auth';
 
@@ -23,5 +23,23 @@ export async function POST(req) {
     return NextResponse.json({ url: blob.url });
   } catch (e) {
     return NextResponse.json({ error: 'Photo storage not connected yet', detail: String(e.message || e) }, { status: 503 });
+  }
+}
+
+// DELETE /api/photos?url=...   — remove one photo from an issue.
+// Used when a marked-up version replaces the original, and to drop a bad shot.
+// The blob is best-effort: if it is already gone, the row still goes.
+export async function DELETE(req) {
+  const me = currentUser();
+  if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const url = new URL(req.url).searchParams.get('url');
+  if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 });
+  try {
+    await ensureSchema();
+    const { rowCount } = await sql`DELETE FROM item_photos WHERE url = ${url}`;
+    try { await del(url); } catch {}
+    return NextResponse.json({ ok: true, removed: rowCount });
+  } catch (e) {
+    return NextResponse.json({ error: 'delete failed', detail: String(e.message || e) }, { status: 500 });
   }
 }
