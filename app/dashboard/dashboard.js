@@ -1219,7 +1219,11 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
     if (!r.ok) { const j = await r.json().catch(() => ({})); setMsg(j.error || 'Save failed'); return false; }
     onSaved(); if (close) onClose(); return true;
   }
-  const MapBlock = () => (
+  // NOTE: this is a plain element, not a component defined during render.
+  // As a component it got a new function identity on every keystroke, so React
+  // remounted the subtree and MouseZoom lost its measured size and zoom/pan —
+  // the map visibly jumped while you typed.
+  const mapBlock = (
     <>
       <label style={{ ...D.flabel, marginTop: MODAL_LAYOUT === 'A' ? 16 : 0 }}>Location on site map</label>
       {prop?.site_map_url ? (
@@ -1270,7 +1274,7 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
               <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
             </div>
             {photos.length > 0 && <div style={{ color: '#95a1b0', fontSize: 12.5, marginTop: 5, textAlign: 'center' }}>Click a photo to zoom · ✎ Mark to draw on it.</div>}
-            {MODAL_LAYOUT === 'A' && <MapBlock />}
+            {MODAL_LAYOUT === 'A' && mapBlock}
           </div>
 
           {/* FIELDS */}
@@ -1313,7 +1317,7 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
 
           {/* MAP — its own column in layout B */}
           {MODAL_LAYOUT === 'B' && (
-            <div style={{ flex: '0 0 300px', minWidth: 280 }}><MapBlock /></div>
+            <div style={{ flex: '0 0 300px', minWidth: 280 }}>{mapBlock}</div>
           )}
         </div>
 
