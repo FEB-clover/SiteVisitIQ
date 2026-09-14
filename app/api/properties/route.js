@@ -1,15 +1,20 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../lib/db';
-import { currentUser } from '../../../lib/auth';
+import { access } from '../../../lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const acc = await access();
+  if (!acc) return NextResponse.json({ error: 'auth' }, { status: 401 });
   try {
     await ensureSchema();
-    const { rows: props } = await sql`SELECT id, name, address, units, site_map_url, sort FROM properties ORDER BY sort`;
+    // a person only ever sees the properties they are granted
+    const { rows: props } = acc.properties === null
+      ? await sql`SELECT id, name, address, units, site_map_url, sort FROM properties ORDER BY sort`
+      : await sql`SELECT id, name, address, units, site_map_url, sort FROM properties
+                   WHERE id = ANY(${acc.properties}) ORDER BY sort`;
     const { rows: floors } = await sql`SELECT property_id, url, idx FROM property_floors ORDER BY property_id, idx`;
     const { rows: counts } = await sql`SELECT property_id,
         count(*) FILTER (WHERE status <> 'Complete' AND NOT archived)::int AS open,

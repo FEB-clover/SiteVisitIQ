@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../../lib/db';
-import { currentUser } from '../../../../lib/auth';
+import { access, allowed } from '../../../../lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -73,7 +73,8 @@ async function fetchBytes(url) {
 
 // POST /api/photos/download  { item_ids:[...] }  or  { urls:[...] }
 export async function POST(req) {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const acc = await access();
+  if (!acc) return NextResponse.json({ error: 'auth' }, { status: 401 });
   let b = {};
   try { b = await req.json(); } catch {}
   const itemIds = Array.isArray(b.item_ids) ? b.item_ids.map(Number).filter(Boolean) : [];
@@ -89,13 +90,16 @@ export async function POST(req) {
 
     if (itemIds.length) {
       const { rows } = await sql`
-        SELECT i.id, i.title, p.name AS property_name, ph.url
+        SELECT i.id, i.title, i.property_id AS property_id_raw, p.name AS property_name, ph.url
           FROM items i
           JOIN properties p ON p.id = i.property_id
           JOIN item_photos ph ON ph.item_id = i.id
          WHERE i.id = ANY(${itemIds})
          ORDER BY i.id, ph.id`;
       if (!rows.length) return NextResponse.json({ error: 'no photos found' }, { status: 404 });
+      if (rows.some((r) => !allowed(acc, r.property_id_raw ?? r.property_id))) {
+        return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+      }
       propLabel = safe(rows[0].property_name, 40);
       const perItem = {};
       for (const r of rows) {

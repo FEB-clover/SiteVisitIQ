@@ -1,13 +1,26 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../../lib/db';
-import { currentUser } from '../../../../lib/auth';
+import { access, allowed } from '../../../../lib/auth';
+
+
+// resolve the property a report belongs to, for the access check
+async function reportProperty(id) {
+  const { rows } = await sql`SELECT property_id FROM site_reports WHERE id = ${Number(id)} LIMIT 1`;
+  return rows[0]?.property_id || null;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // GET /api/site-reports/<id> — report record + attached issues (with photos)
 export async function GET(req, { params }) {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const me = await access();
+  if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  {
+    await ensureSchema();
+    const pid = await reportProperty(params.id);
+    if (pid && !allowed(me, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+  }
   const id = Number(params.id);
   try {
     await ensureSchema();
@@ -40,7 +53,13 @@ export async function GET(req, { params }) {
 // PATCH /api/site-reports/<id>  { name?, walk_date? }
 // Walker is intentionally NOT editable — a report always credits whoever is signed in.
 export async function PATCH(req, { params }) {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const me = await access();
+  if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  {
+    await ensureSchema();
+    const pid = await reportProperty(params.id);
+    if (pid && !allowed(me, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+  }
   const id = Number(params.id);
   let b = {};
   try { b = await req.json(); } catch {}
@@ -63,7 +82,13 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const me = await access();
+  if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  {
+    await ensureSchema();
+    const pid = await reportProperty(params.id);
+    if (pid && !allowed(me, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+  }
   try {
     await ensureSchema();
     await sql`DELETE FROM site_reports WHERE id = ${Number(params.id)}`;

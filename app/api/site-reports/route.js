@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../lib/db';
-import { currentUser } from '../../../lib/auth';
+import { access, allowed } from '../../../lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,10 +12,11 @@ function defaultName(d) {
 
 // GET /api/site-reports?property=<id>&status=draft|saved&mine=1
 export async function GET(req) {
-  const me = currentUser();
+  const me = await access();
   if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
   const url = new URL(req.url);
   const pid = url.searchParams.get('property');
+  if (pid && !allowed(me, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
   const status = url.searchParams.get('status');
   const mine = url.searchParams.get('mine') === '1';
   try {
@@ -28,6 +29,7 @@ export async function GET(req) {
        WHERE (${pid}::text IS NULL OR r.property_id = ${pid})
          AND (${status}::text IS NULL OR r.status = ${status})
          AND (${mine} = false OR r.walker_id = ${me.id})
+         AND (${me.properties === null} OR r.property_id = ANY(${me.properties || []}))
        ORDER BY r.updated_at DESC`;
     return NextResponse.json({ reports: rows });
   } catch (e) {
@@ -37,11 +39,12 @@ export async function GET(req) {
 
 // POST /api/site-reports  { property_id, name?, walk_date? }
 export async function POST(req) {
-  const me = currentUser();
+  const me = await access();
   if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
   let b = {};
   try { b = await req.json(); } catch {}
   const property_id = String(b.property_id || '');
+  if (!allowed(me, property_id)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
   if (!property_id) return NextResponse.json({ error: 'property_id required' }, { status: 400 });
   const walk_date = b.walk_date ? String(b.walk_date).slice(0, 10) : null;
   const name = String(b.name || '').trim() || defaultName(walk_date);

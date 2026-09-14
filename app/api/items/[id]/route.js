@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../../lib/db';
-import { currentUser } from '../../../../lib/auth';
+import { access, allowed } from '../../../../lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,8 +9,14 @@ const PRIORITIES = ['High', 'Low', 'Monitor', 'Status', 'Medium'];
 const STATUSES = ['Open', 'In progress', 'Complete'];
 
 export async function PATCH(req, { params }) {
-  const me = currentUser();
+  const me = await access();
   if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  {
+    const { rows: own } = await sql`SELECT property_id FROM items WHERE id = ${Number(params.id)} LIMIT 1`;
+    if (own[0] && !allowed(me, own[0].property_id)) {
+      return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+    }
+  }
   const id = Number(params.id);
   let b = {};
   try { b = await req.json(); } catch {}
@@ -54,10 +60,14 @@ export async function PATCH(req, { params }) {
 }
 
 export async function DELETE(req, { params }) {
-  const me = currentUser();
+  const me = await access();
   if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
   try {
     await ensureSchema();
+    const { rows: own } = await sql`SELECT property_id FROM items WHERE id = ${Number(params.id)} LIMIT 1`;
+    if (own[0] && !allowed(me, own[0].property_id)) {
+      return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+    }
     await sql`DELETE FROM items WHERE id = ${Number(params.id)}`;
     return NextResponse.json({ ok: true });
   } catch (e) {

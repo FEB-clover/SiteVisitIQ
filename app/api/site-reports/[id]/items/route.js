@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../../../lib/db';
-import { currentUser } from '../../../../../lib/auth';
+import { access, allowed } from '../../../../../lib/auth';
+
+
+// resolve the property a report belongs to, for the access check
+async function reportProperty(id) {
+  const { rows } = await sql`SELECT property_id FROM site_reports WHERE id = ${Number(id)} LIMIT 1`;
+  return rows[0]?.property_id || null;
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,8 +18,13 @@ async function touch(id) {
 
 // POST /api/site-reports/<id>/items  { item_id }  — add an issue to the report
 export async function POST(req, { params }) {
-  const me = currentUser();
+  const me = await access();
   if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  {
+    await ensureSchema();
+    const pid = await reportProperty(params.id);
+    if (pid && !allowed(me, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+  }
   const reportId = Number(params.id);
   let b = {};
   try { b = await req.json(); } catch {}
@@ -41,7 +53,13 @@ export async function POST(req, { params }) {
 
 // DELETE /api/site-reports/<id>/items?item=<itemId>  — remove an issue
 export async function DELETE(req, { params }) {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const me = await access();
+  if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  {
+    await ensureSchema();
+    const pid = await reportProperty(params.id);
+    if (pid && !allowed(me, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
+  }
   const reportId = Number(params.id);
   const itemId = Number(new URL(req.url).searchParams.get('item') || 0);
   if (!itemId) return NextResponse.json({ error: 'item required' }, { status: 400 });

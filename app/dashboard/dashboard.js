@@ -255,6 +255,29 @@ function Markup({ src, itemId, onClose, onSaved, onToast }) {
   );
 }
 
+/* A textarea that sizes itself to its content, so an issue opens showing every
+   word of the notes instead of a scroll stub. Re-measures on open, on typing,
+   and when the window changes width (wrapping changes the line count). */
+function GrowText({ value, onChange, placeholder, minH = 74, style }) {
+  const ref = useRef(null);
+  const fit = useCallback(() => {
+    const el = ref.current; if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.max(minH, el.scrollHeight + 2) + 'px';
+  }, [minH]);
+  useEffect(() => { fit(); }, [value, fit]);
+  useEffect(() => {
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [fit]);
+  return (
+    <textarea ref={ref} value={value} placeholder={placeholder}
+      onChange={(e) => { onChange(e.target.value); fit(); }} onInput={fit}
+      style={{ ...D.finput, minHeight: minH, resize: 'vertical', overflow: 'hidden', lineHeight: 1.45, ...(style || {}) }} />
+  );
+}
+
 function Lightbox({ srcs, start = 0, labels, onClose, onPrint, itemId, onMarkup }) {
   const [i, setI] = useState(start);
   useEffect(() => {
@@ -1279,13 +1302,13 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
             </div>
 
             <label style={D.flabel}>Notes</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What was found…" style={{ ...D.finput, minHeight: 74, resize: 'vertical', lineHeight: 1.45 }} />
+            <GrowText value={notes} onChange={setNotes} placeholder="What was found…" minH={74} />
 
             <label style={D.flabel}>More detail (office)</label>
-            <textarea value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="Fuller description, vendor, measurements…" style={{ ...D.finput, minHeight: 90, resize: 'vertical', lineHeight: 1.45 }} />
+            <GrowText value={detail} onChange={setDetail} placeholder="Fuller description, vendor, measurements…" minH={90} />
 
             <label style={D.flabel}>Office note</label>
-            <textarea value={office} onChange={(e) => setOffice(e.target.value)} placeholder="Internal note for the team…" style={{ ...D.finput, minHeight: 58, resize: 'vertical', lineHeight: 1.45 }} />
+            <GrowText value={office} onChange={setOffice} placeholder="Internal note for the team…" minH={58} />
           </div>
 
           {/* MAP — its own column in layout B */}
@@ -1404,7 +1427,7 @@ function NewIssueModal({ props, defaultPid, onClose, onDone, onPhoto }) {
             </div>
 
             <label style={D.flabel}>Notes</label>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Details…" style={{ ...D.finput, minHeight: 110, resize: 'vertical', lineHeight: 1.45 }} />
+            <GrowText value={notes} onChange={setNotes} placeholder="Details…" minH={110} />
           </div>
         </div>
         {msg && <div style={{ color: '#cd4428', fontSize: 14, marginTop: 10 }}>{msg}</div>}
@@ -1420,46 +1443,158 @@ function NewIssueModal({ props, defaultPid, onClose, onDone, onPhoto }) {
 /* ---------------- Users modal ---------------- */
 function UsersModal({ onClose }) {
   const [users, setUsers] = useState(null);
+  const [props, setProps] = useState([]);
+  const [meId, setMeId] = useState(null);
+  const [open, setOpen] = useState(null);          // which person's access panel is showing
   const [name, setName] = useState(''); const [pin, setPin] = useState(''); const [msg, setMsg] = useState('');
-  const load = () => fetch('/api/users').then((r) => r.json()).then((j) => setUsers(j.users || []));
+  const load = () => fetch('/api/users').then((r) => r.json()).then((j) => {
+    setUsers(j.users || []); setProps(j.properties || []); setMeId(j.meId ?? null);
+  });
   useEffect(() => { load(); }, []);
+
   async function add() {
     setMsg('');
-    const r = await fetch('/api/users', { method: 'POST', headers: J, body: JSON.stringify({ name, pin }) });
+    const r = await fetch('/api/users', { method: 'POST', headers: J,
+      body: JSON.stringify({ name, pin, can_field: true, can_dash: true, all_properties: false, properties: [] }) });
     const j = await r.json();
     if (!r.ok) return setMsg(j.error || 'Failed');
-    setName(''); setPin(''); load();
+    setName(''); setPin('');
+    await load();
+    if (j.user?.id) setOpen(j.user.id);            // go straight to choosing their access
   }
-  async function update(id, body) { await fetch('/api/users', { method: 'POST', headers: J, body: JSON.stringify({ id, ...body }) }); load(); }
+  async function update(id, body) {
+    setMsg('');
+    const r = await fetch('/api/users', { method: 'POST', headers: J, body: JSON.stringify({ id, ...body }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { setMsg(j.error || 'Could not save'); return; }
+    load();
+  }
+  async function remove(u) {
+    if (!confirm(`Remove ${u.name}? Their passcode stops working immediately. Issues and reports they logged keep their name.`)) return;
+    const r = await fetch('/api/users?id=' + u.id, { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return setMsg(j.error || 'Could not remove');
+    setOpen(null); load();
+  }
+  const summary = (u) => {
+    if (u.role === 'admin') return 'Admin · everything';
+    const where = [u.can_field && 'Field app', u.can_dash && 'Dashboard'].filter(Boolean).join(' + ') || 'No app access';
+    const scope = u.all_properties ? 'all properties'
+      : `${u.properties.length} propert${u.properties.length === 1 ? 'y' : 'ies'}`;
+    return `${where} · ${scope}`;
+  };
+
   return (
     <div style={D.lb} onClick={onClose}>
-      <div style={D.modal} onClick={(e) => e.stopPropagation()}>
+      <div style={{ ...D.modal, maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
         <div style={D.modalHead}>
-          <div style={{ fontWeight: 800, fontSize: 20 }}>Users &amp; passcodes</div>
+          <div style={{ fontWeight: 800, fontSize: 20 }}>Users &amp; access</div>
           <button style={D.xbtn} onClick={onClose}>✕</button>
         </div>
-        <div style={{ color: '#6b7684', fontSize: 14, marginBottom: 12 }}>Each person gets a passcode. Every walk and note is stamped with their name.</div>
-        {!users ? <div className="spin" /> : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 15 }}>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #eef1f4' }}>
-                  <td style={{ padding: '8px 6px' }}>{u.name}{u.role === 'admin' && <span style={D.adminTag}>admin</span>}</td>
-                  <td style={{ padding: '8px 6px' }}>
-                    <input defaultValue={u.pin} onBlur={(e) => e.target.value !== u.pin && update(u.id, { pin: e.target.value })} style={{ width: 74, border: '1px solid #d5dde5', borderRadius: 6, padding: '5px 8px', fontVariantNumeric: 'tabular-nums' }} />
-                  </td>
-                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>
-                    <button style={D.tinybtn} onClick={() => update(u.id, { active: !u.active })}>{u.active ? 'Active' : 'Off'}</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <div style={{ color: '#6b7684', fontSize: 14, marginBottom: 14 }}>
+          Each person gets a passcode. Choose which app they can open and which properties they can see.
+          Every walk and note is stamped with their name.
+        </div>
+
+        {!users ? <div className="spin" /> : users.map((u) => {
+          const isOpen = open === u.id;
+          const isMe = u.id === meId;
+          return (
+            <div key={u.id} style={{ border: '1px solid #e6ebf0', borderRadius: 12, marginBottom: 10, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 13px', background: isOpen ? '#f5f8f9' : '#fff' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15.5 }}>
+                    {u.name}
+                    {u.role === 'admin' && <span style={D.adminTag}>admin</span>}
+                    {isMe && <span style={{ ...D.adminTag, background: '#eef2f6', color: '#6b7684' }}>you</span>}
+                  </div>
+                  <div style={{ color: '#8b96a3', fontSize: 13, marginTop: 2 }}>{summary(u)}</div>
+                </div>
+                <input defaultValue={u.pin} title="Passcode"
+                  onBlur={(e) => e.target.value !== u.pin && update(u.id, { pin: e.target.value })}
+                  style={{ width: 78, border: '1px solid #d5dde5', borderRadius: 6, padding: '6px 8px', fontVariantNumeric: 'tabular-nums' }} />
+                <button style={{ ...D.tinybtn, ...(u.active ? {} : { color: '#cd4428' }) }}
+                  onClick={() => update(u.id, { active: !u.active })}>{u.active ? 'Active' : 'Off'}</button>
+                <button style={D.tinybtn} onClick={() => setOpen(isOpen ? null : u.id)}>{isOpen ? 'Done' : 'Access'}</button>
+              </div>
+
+              {isOpen && (
+                <div style={{ padding: '4px 13px 14px', borderTop: '1px solid #eef1f4', background: '#fbfcfd' }}>
+                  <div style={D.accCap}>Role</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    {[['walker', 'User'], ['admin', 'Admin — can manage people']].map(([v, lbl]) => (
+                      <button key={v} onClick={() => update(u.id, { role: v })}
+                        style={{ ...D.pick, ...(u.role === v ? D.pickOn : {}) }}>{lbl}</button>
+                    ))}
+                  </div>
+
+                  <div style={D.accCap}>Can open</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <button onClick={() => update(u.id, { can_field: !u.can_field })}
+                      style={{ ...D.pick, ...(u.role === 'admin' || u.can_field ? D.pickOn : {}) }}>
+                      {u.role === 'admin' || u.can_field ? '✓ ' : ''}Field app
+                    </button>
+                    <button onClick={() => update(u.id, { can_dash: !u.can_dash })}
+                      style={{ ...D.pick, ...(u.role === 'admin' || u.can_dash ? D.pickOn : {}) }}>
+                      {u.role === 'admin' || u.can_dash ? '✓ ' : ''}Dashboard
+                    </button>
+                  </div>
+
+                  <div style={D.accCap}>Properties</div>
+                  {u.role === 'admin' ? (
+                    <div style={{ color: '#6b7684', fontSize: 13.5, padding: '4px 0 2px' }}>
+                      Admins always see every property.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 9, flexWrap: 'wrap' }}>
+                        <button onClick={() => update(u.id, { all_properties: true })}
+                          style={{ ...D.pick, ...(u.all_properties ? D.pickOn : {}) }}>All properties (regional)</button>
+                        <button onClick={() => update(u.id, { all_properties: false })}
+                          style={{ ...D.pick, ...(!u.all_properties ? D.pickOn : {}) }}>Only the ones I pick</button>
+                      </div>
+                      {!u.all_properties && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 6 }}>
+                          {props.map((p) => {
+                            const on = u.properties.includes(p.id);
+                            return (
+                              <button key={p.id} onClick={() => update(u.id, {
+                                properties: on ? u.properties.filter((x) => x !== p.id) : [...u.properties, p.id],
+                              })} style={{ ...D.propPick, ...(on ? D.propPickOn : {}) }}>
+                                <span style={{ ...D.checkbox, background: on ? '#0e5c63' : '#fff', borderColor: on ? '#0e5c63' : '#c3ccd6' }}>{on ? '✓' : ''}</span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {!u.all_properties && u.properties.length === 0 && (
+                        <div style={{ color: '#cd4428', fontSize: 13, marginTop: 8 }}>
+                          No properties selected — this person can sign in but will see an empty list.
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {!isMe && (
+                    <div style={{ marginTop: 14, paddingTop: 11, borderTop: '1px solid #eef1f4' }}>
+                      <button style={{ ...D.tinybtn, color: '#cd4428', borderColor: '#f0c8bd' }}
+                        onClick={() => remove(u)}>Remove {u.name}</button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
         <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
           <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 1, border: '1px solid #d5dde5', borderRadius: 8, padding: '9px 10px' }} />
           <input placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: 90, border: '1px solid #d5dde5', borderRadius: 8, padding: '9px 10px' }} />
           <button style={D.savebtn} onClick={add}>Add</button>
+        </div>
+        <div style={{ color: '#8b96a3', fontSize: 13, marginTop: 7 }}>
+          New people start with no properties — open <b>Access</b> to choose theirs.
         </div>
         {msg && <div style={{ color: '#cd4428', fontSize: 14, marginTop: 8 }}>{msg}</div>}
       </div>
@@ -1467,7 +1602,6 @@ function UsersModal({ onClose }) {
   );
 }
 
-/* ---------------- small pieces ---------------- */
 function Stat({ n, label, color }) {
   return (
     <div style={D.stat}>
@@ -1532,6 +1666,12 @@ const D = {
   chipOn: { background: '#0d1620', color: '#fff', borderColor: '#0d1620' },
   filt: { border: '1px solid #d5dde5', borderRadius: 8, padding: '8px 12px', background: '#fff', color: '#6b7684', fontSize: 14, fontWeight: 600 },
   // queue sort / walker / walk-date controls
+  accCap: { fontSize: 11.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#95a1b0', margin: '12px 0 6px' },
+  pick: { border: '1px solid #d5dde5', borderRadius: 9, padding: '8px 13px', background: '#fff', color: '#4a5665', fontSize: 14, fontWeight: 600 },
+  pickOn: { background: '#0e5c63', borderColor: '#0e5c63', color: '#fff' },
+  propPick: { display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #d5dde5', borderRadius: 9,
+    padding: '8px 10px', background: '#fff', color: '#4a5665', fontSize: 14, fontWeight: 600, textAlign: 'left', minWidth: 0 },
+  propPickOn: { borderColor: '#0e5c63', background: '#e7f0f1', color: '#0e5c63' },
   sortBar: { display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', margin: '0 2px 12px' },
   sortWrap: { display: 'flex', flexDirection: 'column', gap: 4 },
   sortCap: { fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: '#95a1b0' },

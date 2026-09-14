@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql, ensureSchema } from '../../../lib/db';
-import { currentUser } from '../../../lib/auth';
+import { access, allowed } from '../../../lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,16 +8,22 @@ export const dynamic = 'force-dynamic';
 const PRIORITIES = ['High', 'Low', 'Monitor', 'Status', 'Medium'];
 
 export async function GET(req) {
-  if (!currentUser()) return NextResponse.json({ error: 'auth' }, { status: 401 });
+  const acc = await access();
+  if (!acc) return NextResponse.json({ error: 'auth' }, { status: 401 });
   const url = new URL(req.url);
   const pid = url.searchParams.get('property');
+  if (pid && !allowed(acc, pid)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
   try {
     await ensureSchema();
+    // an unscoped list is still limited to the properties this person holds
     const { rows } = pid
       ? await sql`SELECT * FROM items WHERE property_id = ${pid} ORDER BY
           (status='Complete'), CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, created_at DESC`
-      : await sql`SELECT * FROM items ORDER BY (status='Complete'),
-          CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, created_at DESC`;
+      : acc.properties === null
+        ? await sql`SELECT * FROM items ORDER BY (status='Complete'),
+            CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, created_at DESC`
+        : await sql`SELECT * FROM items WHERE property_id = ANY(${acc.properties}) ORDER BY (status='Complete'),
+            CASE priority WHEN 'High' THEN 0 WHEN 'Medium' THEN 1 ELSE 2 END, created_at DESC`;
     const ids = rows.map((r) => r.id);
     let photos = [];
     if (ids.length) {
@@ -32,13 +38,14 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const me = currentUser();
+  const me = await access();
   if (!me) return NextResponse.json({ error: 'auth' }, { status: 401 });
   let b = {};
   try { b = await req.json(); } catch {}
   const property_id = String(b.property_id || '');
   const title = String(b.title || '').trim();
   if (!property_id || !title) return NextResponse.json({ error: 'property and title required' }, { status: 400 });
+  if (!allowed(me, property_id)) return NextResponse.json({ error: 'no access to this property' }, { status: 403 });
   const priority = PRIORITIES.includes(b.priority) ? b.priority : 'Low';
   const notes = String(b.notes || '');
   const category = String(b.category || '');

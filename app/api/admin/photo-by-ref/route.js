@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 import { sql, ensureSchema } from '../../../../lib/db';
-import { currentUser } from '../../../../lib/auth';
+import { access } from '../../../../lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,8 +9,8 @@ export const maxDuration = 30;
 
 // Attach a historical photo to the item identified by its stable ref (admin bulk import).
 export async function POST(req) {
-  const me = currentUser();
-  if (!me || me.role !== 'admin') return NextResponse.json({ error: 'admin' }, { status: 403 });
+  const me = await access();
+  if (!me || !me.isAdmin) return NextResponse.json({ error: 'admin' }, { status: 403 });
   try {
     const form = await req.formData();
     const file = form.get('file');
