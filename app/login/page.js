@@ -54,7 +54,6 @@ export default function Login() {
           </button>
         </div>
       </div>
-      <div style={S.foot}>Clover Capital Partners</div>
     </div>
   );
 }

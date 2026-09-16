@@ -2,7 +2,7 @@ import './globals.css';
 
 export const metadata = {
   title: 'SiteVisit IQ',
-  description: 'Clover Capital Partners — site visit app',
+  description: 'SiteVisit IQ — field site visit application',
 };
 
 export const viewport = {
