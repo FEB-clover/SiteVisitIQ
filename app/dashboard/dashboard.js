@@ -1180,6 +1180,67 @@ function AllIssues({ props, items, onBack, onOpen, patch, onPhoto }) {
 }
 
 /* ---------------- Issue modal (desktop, proportionate) ---------------- */
+/**
+ * What the property's site team has done about this issue, read off their
+ * workbook. STRICTLY READ-ONLY — there is deliberately no input here.
+ *
+ * Owned by the Site Visit tab of the property's Visit Notes & To-Do workbook.
+ * The app mirrors these values; it never writes them, and nothing typed in the
+ * app goes back to Excel. Making them editable here would put two owners on
+ * one field, which is the failure this design exists to avoid.
+ */
+function WorkbookStatus({ item }) {
+  const { wb_status, wb_target_date, wb_manager_notes, wb_synced_at } = item || {};
+  if (!wb_status && !wb_target_date && !wb_manager_notes) return null;
+
+  const when = wb_synced_at ? new Date(wb_synced_at) : null;
+  const ago = when ? (() => {
+    const mins = Math.round((Date.now() - when.getTime()) / 60000);
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs === 1 ? '' : 's'} ago`;
+    return when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  })() : null;
+
+  const done = String(wb_status || '').toLowerCase() === 'done';
+  return (
+    <div style={{
+      background: '#f2f7f5', border: '1px solid #cfe0da', borderLeft: '4px solid #1f6b5c',
+      borderRadius: 8, padding: '10px 12px', marginTop: 14,
+    }}>
+      <div style={{
+        fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em',
+        color: '#1f6b5c', marginBottom: 6, display: 'flex', justifyContent: 'space-between', gap: 8,
+      }}>
+        <span>From the property workbook · read-only</span>
+        {ago && <span style={{ fontWeight: 600, color: '#8b98a5', textTransform: 'none', letterSpacing: 0 }}>{ago}</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {wb_status && (
+          <span style={{
+            fontSize: 12.5, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+            background: done ? '#e4ebe8' : '#1f6b5c', color: done ? '#5d6b66' : '#fff',
+          }}>{wb_status}</span>
+        )}
+        {wb_target_date && (
+          <span style={{ fontSize: 12.5, color: '#5d6b66' }}>
+            target {new Date(wb_target_date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: '2-digit' })}
+          </span>
+        )}
+      </div>
+      {wb_manager_notes && (
+        <div style={{ fontSize: 13, lineHeight: 1.45, color: '#10181f', marginTop: 7, whiteSpace: 'pre-wrap' }}>
+          {wb_manager_notes}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: '#8b98a5', marginTop: 7 }}>
+        The site team owns this. To change it, edit the workbook.
+      </div>
+    </div>
+  );
+}
+
 function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSiteVisit, inSv, onMarkup }) {
   const [title, setTitle] = useState(item.title || '');
   const [priority, setPriority] = useState(RATINGS.includes(item.priority) ? item.priority : 'Low');
@@ -1313,6 +1374,8 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
 
             <label style={D.flabel}>Office note</label>
             <GrowText value={office} onChange={setOffice} placeholder="Internal note for the team…" minH={58} />
+
+            <WorkbookStatus item={item} />
           </div>
 
           {/* MAP — its own column in layout B */}

@@ -863,6 +863,73 @@ function PreWalk({ items, prop, openReport }) {
   );
 }
 
+/**
+ * What the property's site team has done about this issue, read off their
+ * workbook. STRICTLY READ-ONLY — there is deliberately no input here.
+ *
+ * These values are owned by the Site Visit tab of the property's Visit Notes &
+ * To-Do workbook. The app mirrors them so someone standing in front of the
+ * problem can see it has already been scheduled; it never writes them, and
+ * nothing typed in the app goes back to Excel. Editing them here would put two
+ * owners on one field, which is the failure this whole design avoids.
+ *
+ * The timestamp is shown, and shown honestly, because this is a snapshot: the
+ * manager may have typed something five minutes ago that has not been picked
+ * up yet. Better that someone knows how old it is than trusts it blindly.
+ */
+function WorkbookStatus({ item }) {
+  if (!item) return null;
+  const { wb_status, wb_target_date, wb_manager_notes, wb_synced_at } = item;
+  if (!wb_status && !wb_target_date && !wb_manager_notes) return null;
+
+  const when = wb_synced_at ? new Date(wb_synced_at) : null;
+  const ago = when ? (() => {
+    const mins = Math.round((Date.now() - when.getTime()) / 60000);
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs === 1 ? '' : 's'} ago`;
+    return when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  })() : null;
+
+  const done = String(wb_status || '').toLowerCase() === 'done';
+  return (
+    <div style={{
+      background: '#f2f7f5', border: '1px solid #cfe0da', borderLeft: '4px solid #1f6b5c',
+      borderRadius: 10, padding: '10px 12px', margin: '2px 0 4px',
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em',
+        color: '#1f6b5c', marginBottom: 6, display: 'flex', justifyContent: 'space-between', gap: 8,
+      }}>
+        <span>From the property workbook</span>
+        {ago && <span style={{ fontWeight: 600, color: 'var(--muted2)', textTransform: 'none', letterSpacing: 0 }}>{ago}</span>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {wb_status && (
+          <span style={{
+            fontSize: 13, fontWeight: 700, padding: '3px 10px', borderRadius: 999,
+            background: done ? '#e4ebe8' : '#1f6b5c', color: done ? '#5d6b66' : '#fff',
+          }}>{wb_status}</span>
+        )}
+        {wb_target_date && (
+          <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+            target {new Date(wb_target_date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric', year: '2-digit' })}
+          </span>
+        )}
+      </div>
+      {wb_manager_notes && (
+        <div style={{ fontSize: 14, lineHeight: 1.45, color: 'var(--ink, #10181f)', marginTop: 7, whiteSpace: 'pre-wrap' }}>
+          {wb_manager_notes}
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: 'var(--muted2)', marginTop: 7 }}>
+        The site team owns this. To change it, edit the workbook.
+      </div>
+    </div>
+  );
+}
+
 function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, openReport, onSiteVisit, inSv, onMarkup }) {
   const editing = mode === 'edit';
   const [title, setTitle] = useState(item?.title || '');
@@ -963,6 +1030,8 @@ function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, o
             <div style={{ textAlign: 'center', color: 'var(--muted2)', fontSize: 12.5, marginTop: 6 }}>Tap a photo to zoom · ✎ to draw on it · ✕ to remove</div>
           </div>
         )}
+
+        <WorkbookStatus item={item} />
 
         <label style={ST.lbl}>What did you find?</label>
         <input style={ST.input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Gutter separation at clubhouse" />

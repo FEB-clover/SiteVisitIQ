@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { sql, ensureSchema } from '../../../lib/db';
+import { codeFor } from '../../../lib/property-codes';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -58,18 +59,9 @@ export const dynamic = 'force-dynamic';
 
 const PAYLOAD_VERSION = 2;
 
-// workbook ID prefix per property. Anything not listed here is not synced.
-const CODES = {
-  wot: 'WOT',
-  wop: 'WOP',
-  creekstone: 'CRK',
-  foj: 'FOJ',
-  fountains: 'FOJ',
-  gp: 'GBP',
-  gablepoint: 'GBP',
-  'gable-point': 'GBP',
-  forma: 'FRM',
-};
+// The property_id -> workbook code map lives in lib/property-codes.js, shared
+// with the status read-back. One copy, so the two halves cannot drift and
+// attach a manager's note to the wrong property's issue.
 
 // our priority vocabulary -> the workbook's (Instructions section 3).
 // Monitor is an internal-only distinction; it lands as Low for the manager.
@@ -139,7 +131,7 @@ export async function GET(req) {
     const items = [];
     const unmapped = new Set();
     for (const r of rows) {
-      const code = CODES[String(r.property_id).toLowerCase()];
+      const code = codeFor(r.property_id);
       if (!code) { unmapped.add(r.property_id); continue; }
       items.push({
         // stable de-dup key. items.id is a serial PK, so this never changes
