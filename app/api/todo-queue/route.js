@@ -6,22 +6,57 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Read-only export of the items a walker flagged "Send to to-do".
+ * Read-only export of the items a walker flagged "Send to to-do".  (v2 payload)
  *
  * The nightly writer pulls this and appends rows to each property's Site Visit
  * tab in the manager's Visit Notes & To-Do workbook. It is a separate endpoint
- * from /api/items on purpose:
+ * from /api/items on purpose: it is reachable with a sync token instead of a
+ * person's session, so the job never has to hold someone's login.
  *
- *   - it is reachable with a sync token instead of a person's session, so the
- *     job never has to hold someone's login;
- *   - it returns ONLY the nine fields the workbook tab has columns for. The
- *     internal lanes - detail, office_note, cost commentary, photos, map pins,
- *     lender/capex flags - are never serialised here, so they cannot leak into
- *     a workbook that is shared with the management company.
+ * WHAT CHANGED IN v2
+ * ------------------
+ * v1 sent the issue TITLE and called it the description. In the field the
+ * title is the answer to "What did you find?" - a two- or three-word topic
+ * ("Window screen", "Graffiti") - and the actual description of the problem is
+ * in Notes, with follow-up added later in More Detail. So the manager was
+ * getting the label and not the item. v2 sends title, notes and detail as
+ * three separate fields and lets the workbook show all three.
+ *
+ * v1 also mapped the walker's free-text Category into one of the workbook's
+ * five fixed categories, which threw away what they actually typed. v2 sends
+ * it verbatim and lets the manager choose the To-Do List category when they
+ * promote the item. The one thing that must not get lost in that change is the
+ * life-safety signal, so it now travels as its own field.
+ *
+ * v1 had a Location field derived by pattern-matching the text. There is no
+ * location field on the issue form, so it was blank for most rows and guessed
+ * on the rest. It is gone. If Location is wanted it has to be a real field in
+ * the app first.
+ *
+ * v2 also stops sending `responsible`. In the workbook that column is now part
+ * of the staff block, which the sync is never allowed to write to. The feed
+ * sending a default value for a cell the writer must not touch was a trap
+ * waiting to be walked into.
+ *
+ * THE DIRECTION OF THE FEED IS FIXED: app -> workbook, once per item, and
+ * never again. This route is read-only by construction (GET, no mutations),
+ * and the writer only ever appends rows for Ref IDs it has not posted before.
+ * Nothing typed in a workbook is ever read back into the app.
+ *
+ * Note the status filter below: an item that has been closed in the app simply
+ * stops appearing in this feed. It does NOT get removed from the workbook -
+ * a row leaves the manager's list when their team clears it, not when the app
+ * changes. The writer has no delete path at all.
+ *
+ * STILL NOT SERIALISED, deliberately: office_note (labelled "internal" in the
+ * app), photos, map pins, cost commentary, capex/lender flags. These workbooks
+ * live in a folder shared with the management company.
  *
  * Auth: Authorization: Bearer <SYNC_TOKEN>. If SYNC_TOKEN is unset the route
  * refuses every request rather than falling open.
  */
+
+const PAYLOAD_VERSION = 2;
 
 // workbook ID prefix per property. Anything not listed here is not synced.
 const CODES = {
@@ -40,62 +75,20 @@ const CODES = {
 // Monitor is an internal-only distinction; it lands as Low for the manager.
 const PRIORITY = { High: 'High', Medium: 'Medium', Low: 'Low', Monitor: 'Low', Status: 'Low' };
 
-// our free-text category -> the workbook's five exact strings. A value that
-// does not match exactly silently breaks the manager's sweep, so anything
-// unrecognised falls back to Operations/General rather than travelling as-is.
-const CATEGORY = [
-  [/life\s*safety|lender|compliance|fire|egress|hazard/i, 'Life Safety/Lender Compliance'],
-  [/capex|capital|reno|renovation/i, 'CapEx'],
-  [/lease|leasing|market|marketing|tour/i, 'Leasing/Marketing'],
-  [/repair|paint|punch|hvac|plumb|roof|grounds|landscap|maint/i, 'Repairs'],
-];
+// The workbook's cells are wrapped and the tab is meant to stay readable, so a
+// runaway paste is capped here rather than at the writer. These match the caps
+// the writer enforces, so a value that gets through is always writable.
+const MAX_TEXT = 4000;
+const MAX_SHORT = 120;
 
-function category(raw, lifeSafety) {
-  // a life-safety flag outranks whatever the category text says
-  if (lifeSafety) return 'Life Safety/Lender Compliance';
-  const s = String(raw || '');
-  for (const [re, out] of CATEGORY) if (re.test(s)) return out;
-  return 'Operations/General';
-}
-
-// The app has no structured location field yet (see the workflow spec - building /
-// area / unit alongside the map pin is still unbuilt). Rather than shipping the
-// first line of someone's notes into a shared workbook and calling it a location,
-// we pull only an explicit place token out of the title and notes, and leave the
-// column blank when there isn't one. Blank is honest; a wrong location sends a
-// tech to the wrong building.
-// Two tiers, because a numbered building or unit is worth far more to someone
-// walking the property than a generic area word. We look for a numbered place
-// across BOTH the title and the notes before we settle for a named area -
-// "Bldg 7 breezeway" in the notes beats "stair" in the title.
-const NUMBERED = new RegExp(
-  '\\b(?:' +
-    'bldg\\.?\\s*\\d+[a-z]?|building\\s*\\d+[a-z]?|' +
-    'unit\\s*#?\\s*\\d+[a-z]?|apt\\.?\\s*#?\\s*\\d+[a-z]?|' +
-    'carports?\\s*\\d+(?:\\s*[-–]\\s*\\d+)?' +
-  ')\\b', 'i');
-
-const AREA = new RegExp(
-  '\\b(?:' +
-    'breezeway|clubhouse|leasing office|front office|pool\\s*(?:gate|deck|area)?|' +
-    'laundry(?:\\s*room)?|dog park|mail\\s*(?:room|kiosk)|gate\\s*house|' +
-    'stairwell|parking\\s*lot|dumpster|compactor|playground|fitness\\s*center' +
-  ')\\b', 'i');
-
-function location(title, notes) {
-  const sources = [String(title || ''), String(notes || '')];
-  for (const re of [NUMBERED, AREA]) {
-    for (const src of sources) {
-      const m = re.exec(src);
-      if (m) {
-        // keep a trailing area word when it directly follows the number,
-        // so "Bldg 7 breezeway" survives intact rather than becoming "Bldg 7"
-        const tail = src.slice(m.index + m[0].length).match(/^\s+(breezeway|stairwell|laundry|pool|clubhouse)\b/i);
-        return (m[0] + (tail ? ' ' + tail[1] : '')).replace(/\s+/g, ' ').trim();
-      }
-    }
-  }
-  return '';
+function clean(v, max) {
+  const s = String(v == null ? '' : v)
+    .replace(/\r\n/g, '\n')
+    .replace(/[\t\v\f\u0000-\u0008\u000e-\u001f]/g, ' ')   // control chars break the XML
+    .replace(/[ ]{2,}/g, ' ')
+    .trim();
+  if (!s) return '';
+  return s.length > max ? s.slice(0, max - 1).trimEnd() + '…' : s;
 }
 
 function bearer(req) {
@@ -129,14 +122,16 @@ export async function GET(req) {
     const only = url.searchParams.get('property');    // optional single-property run
 
     const { rows } = only
-      ? await sql`SELECT i.id, i.property_id, i.title, i.notes, i.category, i.priority,
-                         i.life_safety, i.walk_date, i.created_at, p.name AS property_name
+      ? await sql`SELECT i.id, i.property_id, i.title, i.notes, i.detail, i.category,
+                         i.priority, i.life_safety, i.walker_name, i.last_walked_by,
+                         i.walk_date, i.created_at, p.name AS property_name
                     FROM items i JOIN properties p ON p.id = i.property_id
                    WHERE i.send_todo AND NOT i.archived AND i.status <> 'Complete'
                      AND i.property_id = ${only}
                    ORDER BY i.property_id, i.id`
-      : await sql`SELECT i.id, i.property_id, i.title, i.notes, i.category, i.priority,
-                         i.life_safety, i.walk_date, i.created_at, p.name AS property_name
+      : await sql`SELECT i.id, i.property_id, i.title, i.notes, i.detail, i.category,
+                         i.priority, i.life_safety, i.walker_name, i.last_walked_by,
+                         i.walk_date, i.created_at, p.name AS property_name
                     FROM items i JOIN properties p ON p.id = i.property_id
                    WHERE i.send_todo AND NOT i.archived AND i.status <> 'Complete'
                    ORDER BY i.property_id, i.id`;
@@ -153,15 +148,17 @@ export async function GET(req) {
         property_id: r.property_id,
         property_code: code,
         walk_date: ymd(r.walk_date) || ymd(r.created_at),
-        location: location(r.title, r.notes),
-        category: category(r.category, r.life_safety),
-        description: String(r.title || '').trim(),
+        found_by: clean(r.walker_name || r.last_walked_by, MAX_SHORT),
+        category: clean(r.category, MAX_SHORT),        // verbatim - no re-bucketing
+        title: clean(r.title, MAX_SHORT),              // "What did you find?"
+        notes: clean(r.notes, MAX_TEXT),               // the substance
+        detail: clean(r.detail, MAX_TEXT),             // added later at the office
         priority: PRIORITY[r.priority] || 'Low',
-        responsible: 'Mgmt',
-        due_date: null,
+        life_safety: r.life_safety ? 'Yes' : '',
       });
     }
     return NextResponse.json({
+      payload_version: PAYLOAD_VERSION,
       generated_at: new Date().toISOString(),
       count: items.length,
       unmapped_properties: [...unmapped],   // surfaced so a new property cannot go missing in silence
