@@ -1340,7 +1340,7 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
 
           {/* FIELDS */}
           <div style={{ flex: MODAL_LAYOUT === 'B' ? '1 1 400px' : '1 1 430px', minWidth: 330 }}>
-            <label style={D.flabel}>Title</label>
+            <label style={D.flabel}>Item</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} style={D.finput} />
 
             <div style={{ display: 'flex', gap: 10 }}>
@@ -1369,10 +1369,10 @@ function ItemModal({ item, prop, pname, onClose, onSaved, onPhoto, onToast, onSi
             <label style={D.flabel}>Notes</label>
             <GrowText value={notes} onChange={setNotes} placeholder="What was found…" minH={74} />
 
-            <label style={D.flabel}>More detail (office)</label>
-            <GrowText value={detail} onChange={setDetail} placeholder="Fuller description, vendor, measurements…" minH={90} />
+            <label style={D.flabel}>More Detail (Office)</label>
+            <GrowText value={detail} onChange={setDetail} placeholder="Fuller description, vendor, measurements… — this reaches the property workbook" minH={90} />
 
-            <label style={D.flabel}>Office note</label>
+            <label style={D.flabel}>Office Note (Internal)</label>
             <GrowText value={office} onChange={setOffice} placeholder="Internal note for the team…" minH={58} />
 
             <WorkbookStatus item={item} />
@@ -1471,7 +1471,7 @@ function NewIssueModal({ props, defaultPid, onClose, onDone, onPhoto }) {
               {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
 
-            <label style={D.flabel}>Title</label>
+            <label style={D.flabel}>Item</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What did you find?" style={D.finput} autoFocus />
 
             <div style={{ display: 'flex', gap: 10 }}>

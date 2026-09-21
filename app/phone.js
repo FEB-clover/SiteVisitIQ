@@ -1033,8 +1033,8 @@ function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, o
 
         <WorkbookStatus item={item} />
 
-        <label style={ST.lbl}>What did you find?</label>
-        <input style={ST.input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Gutter separation at clubhouse" />
+        <label style={ST.lbl}>Item</label>
+        <input style={ST.input} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="A short topic — e.g. Gutter separation at clubhouse" />
 
         <label style={ST.lbl}>Rating</label>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -1061,15 +1061,15 @@ function ItemSheet({ mode, item, prop, onClose, onSaved, onToast, onViewPhoto, o
           </>
         )}
 
-        <label style={ST.lbl}>{editing ? 'Notes' : 'Quick note (optional)'}</label>
+        <label style={ST.lbl}>Notes</label>
         <AutoText value={notes} onChange={setNotes} placeholder="A line now — add detail later at the office" minH={editing ? 96 : 70} />
 
         {editing && (
           <>
-            <label style={ST.lbl}>More detail (added at the office)</label>
-            <AutoText value={detail} onChange={setDetail} placeholder="Fuller description, vendor, measurements…" minH={110} />
+            <label style={ST.lbl}>More Detail (Office)</label>
+            <AutoText value={detail} onChange={setDetail} placeholder="Fuller description, vendor, measurements… — this reaches the property workbook" minH={110} />
 
-            <label style={ST.lbl}>Office note (internal)</label>
+            <label style={ST.lbl}>Office Note (Internal)</label>
             <AutoText value={office} onChange={setOffice} placeholder="Internal note for the team…" minH={70} />
           </>
         )}
